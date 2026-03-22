@@ -1394,11 +1394,8 @@ function defaultData() {
 
 function save() {
   localStorage.setItem(LS_KEY, JSON.stringify(state));
-  // If the active board is synced to Firebase, push the update
-  const board = ab();
-  if (board?.firebaseId) {
-    fbSaveBoard(board).catch(e => console.warn('Firebase save failed:', e));
-  }
+  // Always sync all boards to Firebase
+  fbSaveAllBoards().catch(e => console.warn('Firebase save failed:', e));
 }
 let state = load();
 if (!state.activeBoardId || !state.boards.find(b=>b.id===state.activeBoardId))
@@ -3670,76 +3667,120 @@ showTaskCtx = function(e, gid, tid) {
 };
 
 // ══════════════════════════════════════════════════════════
-//  FIREBASE SYNC & SHARING
+//  FIREBASE SYNC & SHARING  (Option A — always-on sync)
 // ══════════════════════════════════════════════════════════
 
-// ── Firestore helpers ─────────────────────────────────────
+// ── User identity ─────────────────────────────────────────
+// A stable anonymous ID stored in localStorage so we can scope
+// boards to this user and show presence on shared boards.
+const USER_ID_KEY = 'ahab_user_id';
+let MY_USER_ID = localStorage.getItem(USER_ID_KEY);
+if (!MY_USER_ID) {
+  MY_USER_ID = 'u_' + uid();
+  localStorage.setItem(USER_ID_KEY, MY_USER_ID);
+}
+
+const USERS_COL  = 'users';
 const BOARDS_COL = 'boards';
 const PRESENCE_COL = 'presence';
 
-// Serialise a board for Firestore (remove non-serialisable bits)
+// Each user has a doc in /users/{userId} containing their board IDs
+// Each board is a doc in /boards/{boardId}
+
+// ── Serialise ─────────────────────────────────────────────
 function boardToDoc(board) {
-  const doc = JSON.parse(JSON.stringify(board));
-  return doc;
+  return JSON.parse(JSON.stringify(board));
 }
 
-async function fbSaveBoard(board) {
-  if (!board.firebaseId) return;
-  setSyncDot('syncing');
+// ── Save all boards to Firestore ──────────────────────────
+let _saveTimer = null;
+function fbSaveAllBoards() {
+  // Debounce rapid saves (e.g. typing) to 600ms
+  clearTimeout(_saveTimer);
+  return new Promise((resolve, reject) => {
+    _saveTimer = setTimeout(async () => {
+      try {
+        setSyncDot('syncing');
+        const batch = db.batch();
+        for (const board of state.boards) {
+          if (!board.firebaseId) board.firebaseId = board.id;
+          const ref = db.collection(BOARDS_COL).doc(board.firebaseId);
+          batch.set(ref, { ...boardToDoc(board), _owner: MY_USER_ID, _updatedAt: Date.now() });
+        }
+        // Store the list of board IDs on the user doc
+        const userRef = db.collection(USERS_COL).doc(MY_USER_ID);
+        batch.set(userRef, {
+          boardIds: state.boards.map(b => b.firebaseId || b.id),
+          _updatedAt: Date.now(),
+        });
+        await batch.commit();
+        setSyncDot('online');
+        resolve();
+      } catch(e) {
+        setSyncDot('offline');
+        reject(e);
+      }
+    }, 600);
+  });
+}
+
+// ── Load all boards from Firestore ────────────────────────
+async function fbLoadAllBoards() {
   try {
-    await db.collection(BOARDS_COL).doc(board.firebaseId).set(boardToDoc(board));
+    setSyncDot('syncing');
+    const userSnap = await db.collection(USERS_COL).doc(MY_USER_ID).get();
+    if (!userSnap.exists) { setSyncDot('offline'); return null; }
+
+    const { boardIds = [] } = userSnap.data();
+    if (boardIds.length === 0) { setSyncDot('offline'); return null; }
+
+    const boardSnaps = await Promise.all(
+      boardIds.map(id => db.collection(BOARDS_COL).doc(id).get())
+    );
+
+    const boards = boardSnaps
+      .filter(s => s.exists)
+      .map(s => s.data());
+
+    if (boards.length === 0) { setSyncDot('offline'); return null; }
+
     setSyncDot('online');
+    return boards;
   } catch(e) {
+    console.warn('Firebase load failed:', e);
     setSyncDot('offline');
-    throw e;
+    return null;
   }
 }
 
-async function fbPublishBoard(board) {
-  // Create a new Firestore doc for this board
-  const docRef = await db.collection(BOARDS_COL).add({
-    ...boardToDoc(board),
-    _createdAt: Date.now(),
-    _permission: 'edit',
-    _accessCode: '',
-  });
-  board.firebaseId = docRef.id;
-  board._permission = 'edit';
-  board._accessCode = '';
-  save();
-  return docRef.id;
-}
+// ── Real-time listener for a shared board ─────────────────
+let _listeners = {}; // boardId → unsubscribe fn
 
-async function fbUnpublishBoard(board) {
-  if (!board.firebaseId) return;
-  try { await db.collection(BOARDS_COL).doc(board.firebaseId).delete(); } catch(e) {}
-  stopListening();
-  delete board.firebaseId;
-  delete board._permission;
-  delete board._accessCode;
-  save();
-}
-
-// ── Real-time listener ────────────────────────────────────
-let _unsubscribe = null;
-let _suppressNextUpdate = false; // prevent echo when WE save
-
-function startListening(firebaseId) {
-  stopListening();
-  _unsubscribe = db.collection(BOARDS_COL).doc(firebaseId)
+function startListeningToBoard(firebaseId) {
+  if (_listeners[firebaseId]) return; // already listening
+  _listeners[firebaseId] = db.collection(BOARDS_COL).doc(firebaseId)
     .onSnapshot(snap => {
       if (!snap.exists) return;
-      if (_suppressNextUpdate) { _suppressNextUpdate = false; return; }
       const remote = snap.data();
-      if (!remote?.boards && !remote?.id) return; // not a valid board doc
-      // Merge remote into local state — replace the matching board
+      // Skip if this update was triggered by our own save
+      if (remote._updatedAt && remote._owner === MY_USER_ID) {
+        const board = state.boards.find(b => b.firebaseId === firebaseId);
+        if (board && Math.abs((board._lastSavedAt||0) - remote._updatedAt) < 2000) return;
+      }
       const idx = state.boards.findIndex(b => b.firebaseId === firebaseId);
       if (idx >= 0) {
+        const preserved = { firebaseId, _permission: state.boards[idx]._permission, _accessCode: state.boards[idx]._accessCode };
         const merged = migrate({ boards: [remote], members: state.members, activeBoardId: remote.id });
-        state.boards[idx] = { ...merged.boards[0], firebaseId };
+        state.boards[idx] = { ...merged.boards[0], ...preserved };
         localStorage.setItem(LS_KEY, JSON.stringify(state));
         render();
         setSyncDot('online');
+      } else {
+        // Board we don't have locally — add it (shared board update)
+        const merged = migrate({ boards: [remote], members: state.members, activeBoardId: remote.id });
+        state.boards.push({ ...merged.boards[0], firebaseId });
+        localStorage.setItem(LS_KEY, JSON.stringify(state));
+        render();
       }
     }, err => {
       console.warn('Firestore listen error:', err);
@@ -3747,39 +3788,33 @@ function startListening(firebaseId) {
     });
 }
 
-function stopListening() {
-  if (_unsubscribe) { _unsubscribe(); _unsubscribe = null; }
+function stopAllListeners() {
+  Object.values(_listeners).forEach(unsub => unsub());
+  _listeners = {};
 }
 
 // ── Presence ──────────────────────────────────────────────
-let _presenceRef = null;
-let _presenceId  = uid();
+let _presenceRef   = null;
 let _presenceTimer = null;
+let _presenceUnsub = null;
 
 function startPresence(firebaseId) {
   stopPresence();
+  const memberName = state.members[0]?.name || 'Viewer';
+  const memberColor = state.members[0]?.color || '#6c63ff';
   const ref = db.collection(BOARDS_COL).doc(firebaseId)
-    .collection(PRESENCE_COL).doc(_presenceId);
+    .collection(PRESENCE_COL).doc(MY_USER_ID);
   _presenceRef = ref;
-  const data = {
-    id: _presenceId,
-    name: 'Owner',
-    color: state.members[0]?.color || '#6c63ff',
-    ts: Date.now(),
-  };
+  const data = { id: MY_USER_ID, name: memberName, color: memberColor, ts: Date.now() };
   ref.set(data).catch(() => {});
-  // Heartbeat every 20 s; Firestore TTL cleanup handles stale entries
   _presenceTimer = setInterval(() => {
     ref.set({ ...data, ts: Date.now() }).catch(() => {});
   }, 20000);
-
-  // Listen for other viewers
-  db.collection(BOARDS_COL).doc(firebaseId)
-    .collection(PRESENCE_COL)
-    .onSnapshot(snap => {
+  _presenceUnsub = db.collection(BOARDS_COL).doc(firebaseId)
+    .collection(PRESENCE_COL).onSnapshot(snap => {
       const viewers = snap.docs
         .map(d => d.data())
-        .filter(p => p.id !== _presenceId && Date.now() - p.ts < 45000);
+        .filter(p => p.id !== MY_USER_ID && Date.now() - p.ts < 45000);
       renderPresence(viewers);
     }, () => {});
 }
@@ -3787,32 +3822,43 @@ function startPresence(firebaseId) {
 function stopPresence() {
   if (_presenceRef) { _presenceRef.delete().catch(() => {}); _presenceRef = null; }
   if (_presenceTimer) { clearInterval(_presenceTimer); _presenceTimer = null; }
+  if (_presenceUnsub) { _presenceUnsub(); _presenceUnsub = null; }
   renderPresence([]);
 }
 
 function renderPresence(viewers) {
   const bar = document.getElementById('presence-bar');
   if (!bar) return;
-  if (viewers.length === 0) { bar.innerHTML = ''; return; }
-  bar.innerHTML = viewers.slice(0, 5).map(v =>
-    `<div class="presence-avatar" style="background:${v.color}" title="${esc(v.name || 'Viewer')}">${initials(v.name || '?')}</div>`
-  ).join('') + (viewers.length > 5 ? `<div class="presence-avatar" style="background:var(--surface3);color:var(--text2)">+${viewers.length-5}</div>` : '');
+  const dot = document.getElementById('sync-dot');
+  bar.innerHTML = '';
+  if (dot) bar.appendChild(dot);
+  viewers.slice(0, 5).forEach(v => {
+    const el = document.createElement('div');
+    el.className = 'presence-avatar';
+    el.style.background = v.color;
+    el.title = esc(v.name || 'Viewer');
+    el.textContent = initials(v.name || '?');
+    bar.appendChild(el);
+  });
+  if (viewers.length > 5) {
+    const el = document.createElement('div');
+    el.className = 'presence-avatar';
+    el.style.cssText = 'background:var(--surface3);color:var(--text2)';
+    el.textContent = `+${viewers.length - 5}`;
+    bar.appendChild(el);
+  }
 }
 
 // ── Sync dot ──────────────────────────────────────────────
-function setSyncDot(state_) {
+function setSyncDot(s) {
   const dot = document.getElementById('sync-dot');
   if (!dot) return;
-  dot.className = 'sync-dot' + (state_ === 'offline' ? ' offline' : state_ === 'syncing' ? ' syncing' : '');
-  dot.title = state_ === 'online' ? 'Synced' : state_ === 'syncing' ? 'Syncing…' : 'Offline';
+  dot.className = 'sync-dot' + (s === 'offline' ? ' offline' : s === 'syncing' ? ' syncing' : '');
+  dot.title = s === 'online' ? 'Synced' : s === 'syncing' ? 'Syncing…' : 'Offline';
+  dot.style.display = '';
 }
 
-function showSyncDot(show) {
-  const dot = document.getElementById('sync-dot');
-  if (dot) dot.style.display = show ? '' : 'none';
-}
-
-// ── Share link helpers ────────────────────────────────────
+// ── Share link ────────────────────────────────────────────
 function makeShareUrl(firebaseId) {
   return `https://makemoves247.github.io/ahab/Ahab.html?board=${firebaseId}`;
 }
@@ -3821,124 +3867,92 @@ function getShareParam() {
   return new URLSearchParams(location.search).get('board');
 }
 
-// ── Open Share modal ──────────────────────────────────────
+// ── Share modal ───────────────────────────────────────────
 document.getElementById('btn-share').addEventListener('click', openShareModal);
 
 function openShareModal() {
   const board = ab(); if (!board) return;
-  const synced = !!board.firebaseId;
-  document.getElementById('share-unsynced').style.display = synced ? 'none' : '';
-  document.getElementById('share-synced').style.display   = synced ? '' : 'none';
+  if (!board.firebaseId) board.firebaseId = board.id;
+  document.getElementById('share-unsynced').style.display = 'none';
+  document.getElementById('share-synced').style.display   = '';
   document.getElementById('share-status').textContent = '';
-  if (synced) {
-    document.getElementById('share-link-input').value = makeShareUrl(board.firebaseId);
-    document.getElementById('share-code-input').value = board._accessCode || '';
-    document.getElementById(board._permission === 'view' ? 'perm-view' : 'perm-edit').checked = true;
-  }
+  document.getElementById('share-link-input').value = makeShareUrl(board.firebaseId);
+  document.getElementById('share-code-input').value = board._accessCode || '';
+  document.getElementById(board._permission === 'view' ? 'perm-view' : 'perm-edit').checked = true;
   document.getElementById('modal-share').classList.add('open');
 }
 
 document.getElementById('share-close').addEventListener('click', () =>
   document.getElementById('modal-share').classList.remove('open'));
 
-// Publish button
-document.getElementById('btn-publish').addEventListener('click', async () => {
-  const board = ab(); if (!board) return;
-  const btn = document.getElementById('btn-publish');
-  btn.textContent = 'Publishing…'; btn.disabled = true;
-  try {
-    const fbId = await fbPublishBoard(board);
-    startListening(fbId);
-    startPresence(fbId);
-    showSyncDot(true); setSyncDot('online');
-    addShareBadge();
-    openShareModal(); // re-open to show synced state
-  } catch(e) {
-    document.getElementById('share-status').textContent = '✗ Failed: ' + e.message;
-  }
-  btn.textContent = '☁ Publish & Get Share Link'; btn.disabled = false;
-});
+// Hide publish button — all boards are always synced now
+document.getElementById('btn-publish').style.display = 'none';
 
 // Copy link
 document.getElementById('btn-copy-link').addEventListener('click', () => {
   const input = document.getElementById('share-link-input');
   input.select();
-  document.execCommand('copy');
+  try { document.execCommand('copy'); }
+  catch(e) { navigator.clipboard?.writeText(input.value); }
   document.getElementById('btn-copy-link').textContent = 'Copied!';
-  setTimeout(() => document.getElementById('btn-copy-link').textContent = 'Copy', 1800);
+  setTimeout(() => { const b = document.getElementById('btn-copy-link'); if(b) b.textContent = 'Copy'; }, 1800);
 });
 
 // Save access code + permission
 document.getElementById('btn-save-code').addEventListener('click', async () => {
-  const board = ab(); if (!board?.firebaseId) return;
+  const board = ab(); if (!board) return;
   board._accessCode = document.getElementById('share-code-input').value.trim();
   board._permission = document.querySelector('input[name="share-perm"]:checked')?.value || 'edit';
-  await db.collection(BOARDS_COL).doc(board.firebaseId).update({
-    _accessCode: board._accessCode,
-    _permission: board._permission,
-  }).catch(() => {});
   save();
   document.getElementById('share-status').textContent = '✓ Settings saved';
-  setTimeout(() => document.getElementById('share-status').textContent = '', 2000);
+  setTimeout(() => { const s = document.getElementById('share-status'); if(s) s.textContent = ''; }, 2000);
 });
 
-// Sync now (force push current state)
+// Sync now
 document.getElementById('btn-sync-now').addEventListener('click', async () => {
-  const board = ab(); if (!board?.firebaseId) return;
   setSyncDot('syncing');
-  await fbSaveBoard(board);
+  clearTimeout(_saveTimer);
+  await fbSaveAllBoards();
   document.getElementById('share-status').textContent = '✓ Synced';
-  setTimeout(() => document.getElementById('share-status').textContent = '', 2000);
+  setTimeout(() => { const s = document.getElementById('share-status'); if(s) s.textContent = ''; }, 2000);
 });
 
-// Unpublish
+// Unpublish (now means "stop sharing" — board stays in Firebase for owner)
 document.getElementById('btn-unpublish').addEventListener('click', async () => {
-  const board = ab(); if (!board?.firebaseId) return;
+  const board = ab(); if (!board) return;
   if (document.getElementById('btn-unpublish').dataset.confirm !== '1') {
     document.getElementById('btn-unpublish').textContent = '⚠ Click again to confirm';
     document.getElementById('btn-unpublish').dataset.confirm = '1';
     setTimeout(() => {
       const b = document.getElementById('btn-unpublish');
-      if (b) { b.textContent = '✕ Unpublish'; delete b.dataset.confirm; }
+      if (b) { b.textContent = '✕ Stop sharing'; delete b.dataset.confirm; }
     }, 3000);
     return;
   }
-  await fbUnpublishBoard(board);
-  showSyncDot(false);
-  removeShareBadge();
+  board._permission = 'private';
+  save();
   document.getElementById('modal-share').classList.remove('open');
-  toast('Board unpublished');
+  toast('Board set to private');
 });
-
-// ── Share badge on button ─────────────────────────────────
-function addShareBadge() {
-  const btn = document.getElementById('btn-share');
-  if (!btn.querySelector('.share-badge')) {
-    const b = document.createElement('span');
-    b.className = 'share-badge';
-    btn.appendChild(b);
-  }
-}
-function removeShareBadge() {
-  document.getElementById('btn-share')?.querySelector('.share-badge')?.remove();
-}
 
 // ── Handle share link on page load ───────────────────────
 async function handleShareLink() {
   const boardId = getShareParam();
   if (!boardId) return;
 
-  // Fetch the board from Firestore
   let snap;
   try { snap = await db.collection(BOARDS_COL).doc(boardId).get(); }
   catch(e) { toast('Could not reach server'); return; }
   if (!snap.exists) { toast('Shared board not found'); return; }
 
   const remote = snap.data();
+  if (remote._permission === 'private' && remote._owner !== MY_USER_ID) {
+    toast('This board is private'); return;
+  }
+
   const boardName = remote.name || 'Shared Board';
   const hasCode = !!remote._accessCode;
 
-  // Show join modal
   document.getElementById('join-board-name').textContent = boardName;
   document.getElementById('join-desc').textContent =
     `You've been invited to ${remote._permission === 'view' ? 'view' : 'collaborate on'} "${boardName}".`;
@@ -3947,12 +3961,10 @@ async function handleShareLink() {
 
   document.getElementById('btn-join-cancel').onclick = () => {
     document.getElementById('modal-join').classList.remove('open');
-    // Strip the ?board= param so refreshing doesn't re-trigger
     history.replaceState({}, '', location.pathname);
   };
 
   document.getElementById('btn-join-confirm').onclick = async () => {
-    // Validate access code
     if (hasCode) {
       const entered = document.getElementById('join-code-input').value.trim();
       if (entered !== remote._accessCode) {
@@ -3964,79 +3976,120 @@ async function handleShareLink() {
     document.getElementById('modal-join').classList.remove('open');
     history.replaceState({}, '', location.pathname);
 
-    // Merge remote board into local state (or replace if same firebaseId)
     const existing = state.boards.find(b => b.firebaseId === boardId);
     if (!existing) {
       const merged = migrate({ boards: [remote], members: state.members, activeBoardId: remote.id });
-      const newBoard = { ...merged.boards[0], firebaseId: boardId };
+      const newBoard = { ...merged.boards[0], firebaseId: boardId, _permission: remote._permission };
       state.boards.push(newBoard);
       state.activeBoardId = newBoard.id;
     } else {
       state.activeBoardId = existing.id;
     }
     localStorage.setItem(LS_KEY, JSON.stringify(state));
-
-    // Start listening for real-time updates
-    startListening(boardId);
+    startListeningToBoard(boardId);
     startPresence(boardId);
-    showSyncDot(true); setSyncDot('online');
-    addShareBadge();
     render();
     toast(`Opened "${boardName}"`);
   };
 }
 
-// ── Init: check existing synced boards ───────────────────
-function initFirebaseSync() {
-  // Add sync dot to titlebar
+// ── Bootstrap: load from Firebase then start listeners ───
+async function initFirebaseSync() {
+  // Add sync dot
   const syncDot = document.createElement('div');
   syncDot.id = 'sync-dot';
-  syncDot.className = 'sync-dot offline';
-  syncDot.style.display = 'none';
-  syncDot.title = 'Offline';
+  syncDot.className = 'sync-dot syncing';
+  syncDot.title = 'Connecting…';
   document.getElementById('presence-bar').prepend(syncDot);
 
-  // If active board is already synced, resume listening
-  const board = ab();
-  if (board?.firebaseId) {
-    startListening(board.firebaseId);
-    startPresence(board.firebaseId);
-    showSyncDot(true); setSyncDot('online');
-    addShareBadge();
+  // Share badge on btn-share always visible now (boards always synced)
+  addShareBadge();
+
+  // Handle incoming share link first
+  const sharedBoardId = getShareParam();
+  if (sharedBoardId) {
+    await handleShareLink();
+    // Start listening to all local boards too
+    state.boards.forEach(b => {
+      if (b.firebaseId) startListeningToBoard(b.firebaseId);
+    });
+    startPresence(sharedBoardId);
+    return;
   }
 
-  // Re-listen when switching boards
-  const origRender = render;
-  // Handle share badge per board switch
-  document.addEventListener('click', e => {
-    const boardItem = e.target.closest('.board-item');
-    if (!boardItem) return;
-    setTimeout(() => {
-      stopListening(); stopPresence();
-      const b = ab();
-      if (b?.firebaseId) {
-        startListening(b.firebaseId);
-        startPresence(b.firebaseId);
-        showSyncDot(true); setSyncDot('online');
-        addShareBadge();
-      } else {
-        showSyncDot(false);
-        removeShareBadge();
-      }
-    }, 50);
+  // Try to load from Firebase — authoritative source
+  const remoteBoards = await fbLoadAllBoards();
+
+  if (remoteBoards && remoteBoards.length > 0) {
+    // Merge: remote is authoritative, but we keep local boards not yet in Firebase
+    const remoteIds = new Set(remoteBoards.map(b => b.firebaseId || b.id));
+    const localOnly = state.boards.filter(b => !b.firebaseId && !remoteIds.has(b.id));
+
+    const merged = migrate({
+      boards: [...remoteBoards, ...localOnly],
+      members: state.members,
+      activeBoardId: state.activeBoardId,
+    });
+    state.boards = merged.boards;
+    // Preserve active board selection if still valid
+    if (!state.boards.find(b => b.id === state.activeBoardId)) {
+      state.activeBoardId = state.boards[0]?.id;
+    }
+    localStorage.setItem(LS_KEY, JSON.stringify(state));
+    render();
+    setSyncDot('online');
+  } else {
+    // First time on Firebase — push all local boards up
+    state.boards.forEach(b => { if (!b.firebaseId) b.firebaseId = b.id; });
+    localStorage.setItem(LS_KEY, JSON.stringify(state));
+    await fbSaveAllBoards();
+  }
+
+  // Start real-time listeners for all boards
+  state.boards.forEach(b => {
+    if (b.firebaseId) startListeningToBoard(b.firebaseId);
   });
 
-  // Handle share link in URL
-  handleShareLink();
+  // Re-start listener when a new board is created
+  const origMakeBoard = makeBoard;
+  // (makeBoard returns a plain object; boards are added via render events —
+  //  we hook save() instead, which runs after every mutation)
+}
+
+// ── Share badge ───────────────────────────────────────────
+function addShareBadge() {
+  const btn = document.getElementById('btn-share');
+  if (btn && !btn.querySelector('.share-badge')) {
+    const b = document.createElement('span');
+    b.className = 'share-badge';
+    btn.appendChild(b);
+  }
+}
+function removeShareBadge() {
+  document.getElementById('btn-share')?.querySelector('.share-badge')?.remove();
+}
+
+// Also ensure new boards get a firebaseId and listener when saved
+const _origSave = save;
+// Patch: after every save, ensure any new board without a firebaseId gets one and a listener
+function save() {
+  // Assign firebaseId to any new boards
+  state.boards.forEach(b => {
+    if (!b.firebaseId) {
+      b.firebaseId = b.id;
+      // Start listening to new board
+      startListeningToBoard(b.firebaseId);
+    }
+  });
+  localStorage.setItem(LS_KEY, JSON.stringify(state));
+  fbSaveAllBoards().catch(e => console.warn('Firebase save failed:', e));
 }
 
 // ── Initialise ────────────────────────────────────────────────────────────────
 buildSettingsUI();
 applySettings();
-
 render();
-
-initFirebaseSync();
+initFirebaseSync(); // async — loads from Firebase and starts listeners
 </script>
 </body>
 </html>
