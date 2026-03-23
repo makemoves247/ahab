@@ -4077,7 +4077,32 @@ function gatherReportData() {
         return TYPE_OK[ev.type] !== false;
       });
 
-      // Also include notes added in range (from task.notes directly as backup)
+      // ── Fallback: synthesise todo events from task.todos ──────────────────
+      // Covers tasks created before activity logging was added.
+      if (incTodos) {
+        (task.todos || []).forEach(todo => {
+          // Completed todo — use doneAt timestamp
+          if (todo.done && todo.doneAt && todo.doneAt >= from && todo.doneAt <= to) {
+            const alreadyLogged = events.find(e =>
+              e.type === 'todo_done' && e.text === todo.text &&
+              Math.abs(e.ts - todo.doneAt) < 5000);
+            if (!alreadyLogged) {
+              events.push({ type: 'todo_done', ts: todo.doneAt, text: todo.text, _synthetic: true });
+            }
+          }
+          // Added todo — use createdAt timestamp
+          if (todo.createdAt && todo.createdAt >= from && todo.createdAt <= to) {
+            const alreadyLogged = events.find(e =>
+              e.type === 'todo_added' && e.text === todo.text &&
+              Math.abs(e.ts - todo.createdAt) < 5000);
+            if (!alreadyLogged) {
+              events.push({ type: 'todo_added', ts: todo.createdAt, text: todo.text, _synthetic: true });
+            }
+          }
+        });
+      }
+
+      // ── Fallback: synthesise note events from task.notes ─────────────────
       const noteEvents = incNotes ? (task.notes || [])
         .filter(n => !n.system && n.createdAt >= from && n.createdAt <= to &&
           !events.find(e => e.type === 'note_added' && Math.abs(e.ts - n.createdAt) < 100))
