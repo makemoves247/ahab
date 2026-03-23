@@ -4390,22 +4390,23 @@ auth.getRedirectResult().then(result => {
   if (result?.user) hideSignInModal();
 }).catch(() => {});
 
-// Anonymous / guest continue
+// Anonymous / guest continue — works even if Firebase is unreachable
 document.getElementById('btn-anon-signin').addEventListener('click', async () => {
+  const LOCAL_KEY = 'ahab_user_id';
+  // Try anonymous Firebase auth first for a real UID, fall back to localStorage
   try {
-    const cred = await auth.signInAnonymously();
+    const cred = await Promise.race([
+      auth.signInAnonymously(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000))
+    ]);
     MY_USER_ID = cred.user.uid;
-    _authResolve(MY_USER_ID);
     renderUserChip(cred.user);
-    hideSignInModal();
   } catch(e) {
-    // Pure offline fallback
-    const LOCAL_KEY = 'ahab_user_id';
     MY_USER_ID = localStorage.getItem(LOCAL_KEY) || ('u_' + uid());
     localStorage.setItem(LOCAL_KEY, MY_USER_ID);
-    _authResolve(MY_USER_ID);
-    hideSignInModal();
   }
+  _authResolve(MY_USER_ID);
+  hideSignInModal();
 });
 
 // ── User chip ─────────────────────────────────────────────
@@ -4628,12 +4629,24 @@ auth.onAuthStateChanged(async user => {
     MY_USER_ID = user.uid;
     _authResolve(MY_USER_ID);
     renderUserChip(user);
+    hideSignInModal();
   } else {
-    // Show sign-in screen — don't fall back to anonymous for owners
-    // (anonymous is only used for share-link recipients who haven't signed in)
+    // No existing session — show sign-in screen
     showSignInModal();
   }
 });
+
+// Safety timeout — if auth hasn't resolved in 8 seconds, fall back to guest
+setTimeout(() => {
+  if (!MY_USER_ID) {
+    console.warn('Auth timed out — falling back to guest mode');
+    const LOCAL_KEY = 'ahab_user_id';
+    MY_USER_ID = localStorage.getItem(LOCAL_KEY) || ('u_' + uid());
+    localStorage.setItem(LOCAL_KEY, MY_USER_ID);
+    _authResolve(MY_USER_ID);
+    hideSignInModal();
+  }
+}, 8000);
 
 const USERS_COL  = 'users';
 const BOARDS_COL = 'boards';
