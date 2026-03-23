@@ -6,6 +6,7 @@
 <title>Ahab</title>
 <!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
   const firebaseConfig = {
@@ -18,7 +19,10 @@
     measurementId: "G-47CWXMYT4H"
   };
   firebase.initializeApp(firebaseConfig);
-  const db = firebase.firestore();
+  const db   = firebase.firestore();
+  const auth = firebase.auth();
+  // Keep auth state in IndexedDB so it persists across browser sessions
+  auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
 </script>
 
 <style>
@@ -111,7 +115,88 @@
   .toggle-thumb { transition: transform 0.22s cubic-bezier(0.34,1.56,0.64,1), background-color 0.22s ease !important; }
   .toggle-track { transition: background-color 0.22s ease !important; }
 
-  /* ── PRESENCE & SYNC ── */
+  /* ── AUTH & USER ── */
+  #user-chip {
+    display: flex; align-items: center; gap: 7px;
+    padding: 3px 10px 3px 4px;
+    border-radius: 20px; border: 1px solid var(--border);
+    background: var(--input-bg); cursor: pointer;
+    font-size: 0.82em; color: var(--text2);
+    transition: all 0.12s;
+  }
+  #user-chip:hover { border-color: var(--border2); color: var(--text); }
+  .user-avatar {
+    width: 22px; height: 22px; border-radius: 50%;
+    object-fit: cover; flex-shrink: 0;
+  }
+  .user-avatar-initials {
+    width: 22px; height: 22px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.65em; font-weight: 700; color: #fff;
+    flex-shrink: 0;
+  }
+
+  /* Sign-in modal */
+  #modal-signin .modal { text-align: center; padding: 36px 32px; }
+  .signin-logo { font-size: 2.5em; margin-bottom: 12px; }
+  .signin-title { font-size: 1.2em; font-weight: 700; margin-bottom: 6px; color: var(--text); }
+  .signin-sub { font-size: 0.86em; color: var(--text3); margin-bottom: 28px; line-height: 1.5; }
+  .btn-google {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    width: 100%; padding: 11px 16px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--input-bg); color: var(--text);
+    font-family: var(--font-body); font-size: 0.93em; font-weight: 500;
+    cursor: pointer; transition: all 0.15s; margin-bottom: 10px;
+  }
+  .btn-google:hover { background: var(--hover-strong); border-color: var(--border2); }
+  .btn-google svg { width: 18px; height: 18px; flex-shrink: 0; }
+  .btn-anon {
+    background: none; border: none; color: var(--text3);
+    font-family: var(--font-body); font-size: 0.82em;
+    cursor: pointer; padding: 6px; text-decoration: underline;
+  }
+  .btn-anon:hover { color: var(--text2); }
+
+  /* User menu dropdown */
+  #user-menu {
+    position: fixed; z-index: 600;
+    background: var(--dd-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: 0 8px 24px var(--shadow-dd);
+    padding: 6px; min-width: 200px;
+    display: none;
+  }
+  #user-menu.open { display: block; }
+  .user-menu-info {
+    padding: 8px 10px 10px; border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
+  }
+  .user-menu-name { font-size: 0.86em; font-weight: 600; color: var(--text); }
+  .user-menu-email { font-size: 0.75em; color: var(--text3); margin-top: 2px; }
+
+  /* Editor list in share modal */
+  .editor-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .editor-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-radius: var(--radius-sm);
+    background: var(--surface2); font-size: 0.86em;
+  }
+  .editor-avatar {
+    width: 24px; height: 24px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.65em; font-weight: 700; color: #fff; flex-shrink: 0;
+  }
+  .editor-info { flex: 1; min-width: 0; }
+  .editor-name { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .editor-email { font-size: 0.79em; color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .editor-role { font-size: 0.75em; color: var(--text3); flex-shrink: 0; }
+  .editor-remove {
+    background: none; border: none; color: var(--text3);
+    cursor: pointer; font-size: 13px; padding: 2px 4px; border-radius: 3px;
+    flex-shrink: 0; opacity: 0;
+  }
+  .editor-row:hover .editor-remove { opacity: 1; }
+  .editor-remove:hover { color: #ff6584; }
   #presence-bar {
     display: flex; align-items: center; gap: 4px;
   }
@@ -934,8 +1019,21 @@
     <button class="tb-btn secondary" id="btn-share" title="Share board">⬆ Share</button>
     <button class="tb-btn secondary" id="btn-add-group-toolbar">＋ Group</button>
     <button class="tb-btn primary" id="btn-add-task-toolbar">＋ Task</button>
+    <div id="user-chip" title="Account">
+      <div class="user-avatar-initials" id="user-chip-avatar" style="background:#6c63ff">?</div>
+      <span id="user-chip-name">Account</span>
+    </div>
     <button id="settings-btn" title="Settings">⚙</button>
   </div>
+</div>
+
+<!-- User menu -->
+<div id="user-menu">
+  <div class="user-menu-info">
+    <div class="user-menu-name" id="um-name">—</div>
+    <div class="user-menu-email" id="um-email">—</div>
+  </div>
+  <div class="dropdown-item" id="um-signout">Sign out</div>
 </div>
 
 <div id="app-body">
@@ -1281,9 +1379,26 @@
   </div>
 </div>
 
+<!-- Sign-in modal -->
+<div class="modal-overlay" id="modal-signin" style="z-index:1100">
+  <div class="modal" style="width:360px">
+    <div class="signin-logo">⚓</div>
+    <div class="signin-title">Welcome to Ahab</div>
+    <div class="signin-sub">Sign in to sync your boards across all your devices and share with collaborators.</div>
+    <button class="btn-google" id="btn-google-signin">
+      <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+      Continue with Google
+    </button>
+    <button class="btn-anon" id="btn-anon-signin">Continue without signing in</button>
+    <p style="font-size:0.75em;color:var(--text3);margin-top:14px;line-height:1.5">
+      Signing in with Google lets your data follow you to any device automatically.
+    </p>
+  </div>
+</div>
+
 <!-- Share modal -->
 <div class="modal-overlay" id="modal-share">
-  <div class="modal" style="width:420px">
+  <div class="modal" style="width:460px;max-height:90vh;overflow-y:auto">
     <h2>Share Board</h2>
     <div id="share-status" style="font-size:0.86em;color:var(--text2);margin-bottom:14px;min-height:18px"></div>
 
@@ -1298,25 +1413,40 @@
 
     <!-- Already synced -->
     <div id="share-synced" style="display:none">
-      <div style="margin-bottom:12px">
+
+      <!-- ── Collaborators ── -->
+      <div style="margin-bottom:18px">
+        <label class="modal-label">Collaborators</label>
+        <p style="font-size:0.79em;color:var(--text3);margin:4px 0 10px">Invite people by email. They must sign in with Google to access the board.</p>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <input class="modal-input" id="invite-email" placeholder="colleague@example.com" style="flex:1" type="email" />
+          <select class="modal-select" id="invite-role" style="width:110px">
+            <option value="edit">Can edit</option>
+            <option value="view">View only</option>
+          </select>
+          <button class="modal-btn confirm" id="btn-invite" style="flex-shrink:0;padding:8px 14px">Invite</button>
+        </div>
+        <div class="editor-list" id="editor-list"></div>
+      </div>
+
+      <div style="border-top:1px solid var(--border);padding-top:14px;margin-bottom:14px">
         <label class="modal-label">Share link</label>
-        <div style="display:flex;gap:8px;margin-top:4px">
+        <p style="font-size:0.79em;color:var(--text3);margin:4px 0 8px">Anyone with this link can request access (subject to access code if set).</p>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
           <input class="modal-input" id="share-link-input" readonly style="flex:1;font-size:0.82em;color:var(--text3)" />
           <button class="modal-btn confirm" id="btn-copy-link" style="flex-shrink:0;padding:8px 14px">Copy</button>
         </div>
-      </div>
 
-      <div style="margin-bottom:16px">
         <label class="modal-label">Access code (optional)</label>
         <div style="display:flex;gap:8px;margin-top:4px;align-items:center">
           <input class="modal-input" id="share-code-input" placeholder="Set a code to restrict access…" style="flex:1" />
           <button class="modal-btn cancel" id="btn-save-code" style="flex-shrink:0">Save</button>
         </div>
-        <p style="font-size:0.79em;color:var(--text3);margin-top:6px">Leave blank to allow anyone with the link to view.</p>
+        <p style="font-size:0.79em;color:var(--text3);margin-top:6px">Leave blank to allow anyone with the link.</p>
       </div>
 
-      <div style="margin-bottom:16px">
-        <label class="modal-label">Permissions</label>
+      <div style="margin-bottom:14px">
+        <label class="modal-label">Link permissions</label>
         <div style="display:flex;gap:10px;margin-top:8px">
           <label style="display:flex;align-items:center;gap:7px;font-size:0.9em;color:var(--text2);cursor:pointer">
             <input type="radio" name="share-perm" value="view" id="perm-view" /> View only
@@ -1329,7 +1459,7 @@
 
       <div style="display:flex;gap:8px">
         <button class="modal-btn confirm" id="btn-sync-now" style="flex:1">↺ Sync Now</button>
-        <button class="modal-btn cancel" id="btn-unpublish" style="flex:1;color:#ff6584">✕ Unpublish</button>
+        <button class="modal-btn cancel" id="btn-unpublish" style="flex:1;color:#ff6584">✕ Stop sharing</button>
       </div>
     </div>
 
@@ -4222,10 +4352,252 @@ document.getElementById('rpt-export-rtf').addEventListener('click', () => {
 });
 
 // ══════════════════════════════════════════════════════════
-//  FIREBASE SYNC & SHARING  (Option A — always-on sync)
+//  AUTHENTICATION — Google Sign-In
 // ══════════════════════════════════════════════════════════
 
-// ── Access code hashing ───────────────────────────────────
+// ── Sign-in modal ─────────────────────────────────────────
+function showSignInModal() {
+  document.getElementById('modal-signin').classList.add('open');
+}
+function hideSignInModal() {
+  document.getElementById('modal-signin').classList.remove('open');
+}
+
+// Google sign-in
+document.getElementById('btn-google-signin').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-google-signin');
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    // signInWithPopup works in browsers; WKWebView needs redirect
+    const isWK = /AppleWebKit/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent) && window.location.protocol === 'app:';
+    if (isWK) {
+      await auth.signInWithRedirect(provider);
+    } else {
+      await auth.signInWithPopup(provider);
+    }
+    // onAuthStateChanged fires next — resolves authReadyPromise
+    hideSignInModal();
+  } catch(e) {
+    console.error('Google sign-in failed:', e);
+    btn.disabled = false;
+    btn.innerHTML = `<svg viewBox="0 0 24 24" style="width:18px;height:18px"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg> Try again — ${e.message.slice(0,40)}`;
+  }
+});
+
+// Handle redirect result on page load (for WKWebView path)
+auth.getRedirectResult().then(result => {
+  if (result?.user) hideSignInModal();
+}).catch(() => {});
+
+// Anonymous / guest continue
+document.getElementById('btn-anon-signin').addEventListener('click', async () => {
+  try {
+    const cred = await auth.signInAnonymously();
+    MY_USER_ID = cred.user.uid;
+    _authResolve(MY_USER_ID);
+    renderUserChip(cred.user);
+    hideSignInModal();
+  } catch(e) {
+    // Pure offline fallback
+    const LOCAL_KEY = 'ahab_user_id';
+    MY_USER_ID = localStorage.getItem(LOCAL_KEY) || ('u_' + uid());
+    localStorage.setItem(LOCAL_KEY, MY_USER_ID);
+    _authResolve(MY_USER_ID);
+    hideSignInModal();
+  }
+});
+
+// ── User chip ─────────────────────────────────────────────
+function renderUserChip(user) {
+  if (!user) return;
+  const chip      = document.getElementById('user-chip');
+  const avatar    = document.getElementById('user-chip-avatar');
+  const nameEl    = document.getElementById('user-chip-name');
+  const umName    = document.getElementById('um-name');
+  const umEmail   = document.getElementById('um-email');
+
+  const isAnon    = user.isAnonymous;
+  const name      = user.displayName || (isAnon ? 'Guest' : 'User');
+  const email     = user.email || '';
+  const photoURL  = user.photoURL;
+  const color     = AVATAR_BG[Math.abs(MY_USER_ID.charCodeAt(0)) % AVATAR_BG.length];
+
+  if (photoURL) {
+    avatar.outerHTML = `<img class="user-avatar" id="user-chip-avatar" src="${photoURL}" referrerpolicy="no-referrer" />`;
+  } else {
+    avatar.style.background = color;
+    avatar.textContent = initials(name);
+  }
+  nameEl.textContent = isAnon ? 'Guest' : name.split(' ')[0];
+  if (umName)  umName.textContent  = name;
+  if (umEmail) umEmail.textContent = email || 'Anonymous session';
+
+  // Save user profile to Firestore so others can look up name/email by UID
+  if (MY_USER_ID && !isAnon) {
+    db.collection('userProfiles').doc(MY_USER_ID).set({
+      uid: MY_USER_ID, name, email, photoURL: photoURL || '', updatedAt: Date.now()
+    }, { merge: true }).catch(() => {});
+  }
+}
+
+// User chip click → show user menu
+document.getElementById('user-chip').addEventListener('click', e => {
+  e.stopPropagation();
+  const menu = document.getElementById('user-menu');
+  const rect = document.getElementById('user-chip').getBoundingClientRect();
+  menu.style.top  = (rect.bottom + 6) + 'px';
+  menu.style.right = (window.innerWidth - rect.right) + 'px';
+  menu.style.left  = 'auto';
+  menu.classList.toggle('open');
+});
+document.addEventListener('click', () => document.getElementById('user-menu')?.classList.remove('open'));
+
+// Sign out
+document.getElementById('um-signout').addEventListener('click', async () => {
+  await auth.signOut();
+  document.getElementById('user-menu').classList.remove('open');
+  // Clear local state so we start fresh
+  localStorage.removeItem(LS_KEY);
+  showSignInModal();
+  toast('Signed out');
+});
+
+// ══════════════════════════════════════════════════════════
+//  COLLABORATORS
+// ══════════════════════════════════════════════════════════
+
+// ── Render editor list in share modal ─────────────────────
+async function renderEditorList(board) {
+  const list = document.getElementById('editor-list');
+  if (!list) return;
+  const editors = board._editors || []; // [{uid, email, name, role}]
+
+  if (editors.length === 0) {
+    list.innerHTML = `<div style="font-size:0.82em;color:var(--text3);padding:4px 0">No collaborators yet.</div>`;
+    return;
+  }
+
+  const isOwner = board._owner === MY_USER_ID;
+
+  list.innerHTML = editors.map(ed => {
+    const color = AVATAR_BG[Math.abs((ed.uid||'x').charCodeAt(0)) % AVATAR_BG.length];
+    const ini   = initials(ed.name || ed.email || '?');
+    return `
+      <div class="editor-row" data-uid="${esc(ed.uid||'')}">
+        <div class="editor-avatar" style="background:${color}">${ini}</div>
+        <div class="editor-info">
+          <div class="editor-name">${esc(ed.name || ed.email || 'Unknown')}</div>
+          <div class="editor-email">${esc(ed.email || ed.uid || '')}</div>
+        </div>
+        <div class="editor-role">${ed.role === 'view' ? 'Viewer' : 'Editor'}</div>
+        ${isOwner ? `<button class="editor-remove" data-uid="${esc(ed.uid||'')}">✕</button>` : ''}
+      </div>`;
+  }).join('');
+
+  list.querySelectorAll('.editor-remove').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const uid_ = btn.dataset.uid;
+      board._editors = (board._editors || []).filter(e => e.uid !== uid_);
+      save();
+      await renderEditorList(board);
+      document.getElementById('share-status').textContent = '✓ Collaborator removed';
+      setTimeout(() => { const s = document.getElementById('share-status'); if(s) s.textContent=''; }, 2000);
+    });
+  });
+}
+
+// ── Invite by email ───────────────────────────────────────
+document.getElementById('btn-invite').addEventListener('click', async () => {
+  const emailInput = document.getElementById('invite-email');
+  const roleInput  = document.getElementById('invite-role');
+  const email = emailInput.value.trim().toLowerCase();
+  if (!email || !email.includes('@')) { toast('Enter a valid email'); return; }
+
+  const board = ab(); if (!board) return;
+  if (!board.firebaseId) { toast('Board not yet synced'); return; }
+
+  const btn = document.getElementById('btn-invite');
+  btn.disabled = true; btn.textContent = 'Inviting…';
+
+  try {
+    // Look up the user's UID by email from userProfiles
+    const profileSnap = await db.collection('userProfiles')
+      .where('email', '==', email).limit(1).get();
+
+    if (profileSnap.empty) {
+      // User hasn't signed in yet — store invite by email, resolved on their next sign-in
+      if (!board._invites) board._invites = [];
+      const already = board._invites.find(i => i.email === email);
+      if (!already) {
+        board._invites.push({ email, role: roleInput.value, invitedAt: Date.now() });
+      }
+      document.getElementById('share-status').textContent =
+        `✓ Invite recorded for ${email} — they'll get access when they sign in`;
+    } else {
+      const profile = profileSnap.docs[0].data();
+      if (!board._editors) board._editors = [];
+      const already = board._editors.find(e => e.uid === profile.uid);
+      if (already) {
+        document.getElementById('share-status').textContent = `${email} is already a collaborator`;
+        btn.disabled = false; btn.textContent = 'Invite';
+        return;
+      }
+      board._editors.push({
+        uid:   profile.uid,
+        email: profile.email,
+        name:  profile.name,
+        role:  roleInput.value,
+        addedAt: Date.now(),
+      });
+      document.getElementById('share-status').textContent = `✓ ${profile.name || email} added`;
+    }
+
+    save();
+    emailInput.value = '';
+    await renderEditorList(board);
+    setTimeout(() => { const s = document.getElementById('share-status'); if(s) s.textContent=''; }, 3000);
+  } catch(e) {
+    document.getElementById('share-status').textContent = '✗ Error: ' + e.message;
+  }
+  btn.disabled = false; btn.textContent = 'Invite';
+});
+
+// ── Check pending invites on sign-in ─────────────────────
+// When a Google-signed-in user opens a board they were invited to,
+// add them to _editors automatically
+async function claimPendingInvites(user) {
+  if (!user || user.isAnonymous || !user.email) return;
+  try {
+    // Find boards where this email has a pending invite
+    const boardsSnap = await db.collection('boards')
+      .where('_invites', 'array-contains-any', [])
+      .limit(0).get(); // can't query nested — handled on board open instead
+  } catch(e) {}
+}
+
+// Called when a user joins a shared board — check if their email has a pending invite
+async function resolvePendingInvite(board, user) {
+  if (!user || user.isAnonymous || !user.email || !board._invites?.length) return false;
+  const invite = board._invites.find(i => i.email === user.email.toLowerCase());
+  if (!invite) return false;
+
+  if (!board._editors) board._editors = [];
+  if (!board._editors.find(e => e.uid === user.uid)) {
+    board._editors.push({
+      uid:   user.uid,
+      email: user.email,
+      name:  user.displayName || user.email,
+      role:  invite.role,
+      addedAt: Date.now(),
+    });
+  }
+  board._invites = board._invites.filter(i => i.email !== user.email.toLowerCase());
+  return true; // board was updated
+}
+
+// ── Open share modal — also renders editor list ───────────
+// (override the existing openShareModal to add editor rendering)
 // Codes are stored as SHA-256 hashes so they can't be read
 // from the Firestore doc or browser network tab.
 async function hashCode(plaintext) {
@@ -4244,14 +4616,24 @@ async function verifyCode(entered, storedHash) {
   const h = await hashCode(entered);
   return h === storedHash;
 }
-// A stable anonymous ID stored in localStorage so we can scope
-// boards to this user and show presence on shared boards.
-const USER_ID_KEY = 'ahab_user_id';
-let MY_USER_ID = localStorage.getItem(USER_ID_KEY);
-if (!MY_USER_ID) {
-  MY_USER_ID = 'u_' + uid();
-  localStorage.setItem(USER_ID_KEY, MY_USER_ID);
-}
+// ── User identity via Firebase Auth ──────────────────────
+// MY_USER_ID is the Firebase Auth UID — same across all browsers/devices
+// once the user is signed in. Persists automatically via IndexedDB.
+let MY_USER_ID = null;
+let _authResolve;
+const authReadyPromise = new Promise(res => { _authResolve = res; });
+
+auth.onAuthStateChanged(async user => {
+  if (user) {
+    MY_USER_ID = user.uid;
+    _authResolve(MY_USER_ID);
+    renderUserChip(user);
+  } else {
+    // Show sign-in screen — don't fall back to anonymous for owners
+    // (anonymous is only used for share-link recipients who haven't signed in)
+    showSignInModal();
+  }
+});
 
 const USERS_COL  = 'users';
 const BOARDS_COL = 'boards';
@@ -4268,11 +4650,12 @@ function boardToDoc(board) {
 // ── Save all boards to Firestore ──────────────────────────
 let _saveTimer = null;
 function fbSaveAllBoards() {
-  // Debounce rapid saves (e.g. typing) to 600ms
   clearTimeout(_saveTimer);
   return new Promise((resolve, reject) => {
     _saveTimer = setTimeout(async () => {
       try {
+        // Ensure auth has resolved before using MY_USER_ID
+        if (!MY_USER_ID) await authReadyPromise;
         setSyncDot('syncing');
         const batch = db.batch();
         for (const board of state.boards) {
@@ -4300,6 +4683,7 @@ function fbSaveAllBoards() {
 // ── Load all boards from Firestore ────────────────────────
 async function fbLoadAllBoards() {
   try {
+    if (!MY_USER_ID) await authReadyPromise;
     setSyncDot('syncing');
     const userSnap = await db.collection(USERS_COL).doc(MY_USER_ID).get();
     if (!userSnap.exists) { setSyncDot('offline'); return null; }
@@ -4452,6 +4836,8 @@ function openShareModal() {
   document.getElementById('share-link-input').value = makeShareUrl(board.firebaseId);
   document.getElementById('share-code-input').value = board._hasCode ? '••••••••' : '';
   document.getElementById(board._permission === 'view' ? 'perm-view' : 'perm-edit').checked = true;
+  document.getElementById('invite-email').value = '';
+  renderEditorList(board);
   document.getElementById('modal-share').classList.add('open');
 }
 
@@ -4522,7 +4908,13 @@ async function handleShareLink() {
   if (!snap.exists) { toast('Shared board not found'); return; }
 
   const remote = snap.data();
-  if (remote._permission === 'private' && remote._owner !== MY_USER_ID) {
+
+  // Check if current user is already an authorized editor
+  const currentUser = auth.currentUser;
+  const isOwner  = remote._owner === MY_USER_ID;
+  const isEditor = isOwner || (remote._editors || []).some(e => e.uid === MY_USER_ID);
+
+  if (remote._permission === 'private' && !isEditor) {
     toast('This board is private'); return;
   }
 
@@ -4571,6 +4963,16 @@ async function handleShareLink() {
     if (!existing) {
       const merged = migrate({ boards: [remote], members: state.members, activeBoardId: remote.id });
       const newBoard = { ...merged.boards[0], firebaseId: boardId, _permission: remote._permission };
+      // Resolve any pending invite for this user's email
+      const user = auth.currentUser;
+      const changed = await resolvePendingInvite(newBoard, user);
+      if (changed) {
+        // Push the updated editors list to Firestore
+        db.collection(BOARDS_COL).doc(boardId).update({
+          _editors: newBoard._editors,
+          _invites:  newBoard._invites,
+        }).catch(() => {});
+      }
       state.boards.push(newBoard);
       state.activeBoardId = newBoard.id;
     } else {
@@ -4593,14 +4995,27 @@ async function initFirebaseSync() {
   syncDot.title = 'Connecting…';
   document.getElementById('presence-bar').prepend(syncDot);
 
-  // Share badge on btn-share always visible now (boards always synced)
+  // Show a loading overlay while auth resolves
+  const overlay = document.createElement('div');
+  overlay.id = 'auth-loading';
+  overlay.innerHTML = `<div style="text-align:center">
+    <div style="font-size:2em;margin-bottom:12px">⚓</div>
+    <div style="font-size:0.9em;color:var(--text2)">Signing in…</div>
+  </div>`;
+  overlay.style.cssText = 'position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center';
+  document.body.appendChild(overlay);
+
+  // Wait for Firebase Auth to resolve — this is instant if already signed in
+  await authReadyPromise;
+  overlay.remove();
+
+  // Share badge always visible
   addShareBadge();
 
   // Handle incoming share link first
   const sharedBoardId = getShareParam();
   if (sharedBoardId) {
     await handleShareLink();
-    // Start listening to all local boards too
     state.boards.forEach(b => {
       if (b.firebaseId) startListeningToBoard(b.firebaseId);
     });
@@ -4612,7 +5027,6 @@ async function initFirebaseSync() {
   const remoteBoards = await fbLoadAllBoards();
 
   if (remoteBoards && remoteBoards.length > 0) {
-    // Merge: remote is authoritative, but we keep local boards not yet in Firebase
     const remoteIds = new Set(remoteBoards.map(b => b.firebaseId || b.id));
     const localOnly = state.boards.filter(b => !b.firebaseId && !remoteIds.has(b.id));
 
@@ -4622,7 +5036,6 @@ async function initFirebaseSync() {
       activeBoardId: state.activeBoardId,
     });
     state.boards = merged.boards;
-    // Preserve active board selection if still valid
     if (!state.boards.find(b => b.id === state.activeBoardId)) {
       state.activeBoardId = state.boards[0]?.id;
     }
@@ -4630,7 +5043,7 @@ async function initFirebaseSync() {
     render();
     setSyncDot('online');
   } else {
-    // First time on Firebase — push all local boards up
+    // First time — push local boards to Firebase under this auth UID
     state.boards.forEach(b => { if (!b.firebaseId) b.firebaseId = b.id; });
     localStorage.setItem(LS_KEY, JSON.stringify(state));
     await fbSaveAllBoards();
@@ -4640,11 +5053,6 @@ async function initFirebaseSync() {
   state.boards.forEach(b => {
     if (b.firebaseId) startListeningToBoard(b.firebaseId);
   });
-
-  // Re-start listener when a new board is created
-  const origMakeBoard = makeBoard;
-  // (makeBoard returns a plain object; boards are added via render events —
-  //  we hook save() instead, which runs after every mutation)
 }
 
 // ── Share badge ───────────────────────────────────────────
