@@ -3403,9 +3403,8 @@ function exportCSV(board) {
     }).join(',')
   ).join('\r\n');
 
-  const bom = '\uFEFF'; // UTF-8 BOM so Excel opens it correctly
-  const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
-  downloadBlob(blob, sanitiseName(board.name) + '.csv');
+  const bom = '\uFEFF';
+  nativeDownload(sanitiseName(board.name) + '.csv', bom + csv, 'text/csv;charset=utf-8;');
   toast('CSV exported ✓');
 }
 
@@ -3717,6 +3716,19 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// Routes download through native bridge in the .app, blob URL in browser
+function nativeDownload(filename, content, mimeType) {
+  if (window.webkit?.messageHandlers?.nativeBridge) {
+    window.webkit.messageHandlers.nativeBridge.postMessage({
+      action: 'saveFile', filename, content, mimeType,
+    });
+    toast('Choose where to save ' + filename);
+  } else {
+    const blob = new Blob([content], { type: mimeType });
+    downloadBlob(blob, filename);
+  }
+}
+
 //  END EXPORT FUNCTIONS
 function buildSettingsUI() {
   // Font cards
@@ -3784,11 +3796,7 @@ function buildSettingsUI() {
 
   // Export JSON
   document.getElementById('sp-export')?.addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'ahab-export.json';
-    a.click();
+    nativeDownload('ahab-export.json', JSON.stringify(state, null, 2), 'application/json');
     toast('Data exported ✓');
   });
 
@@ -3804,18 +3812,25 @@ function buildSettingsUI() {
     const board = ab();
     if (!board) { toast('No active board'); return; }
     try {
-      // Try async (compressed) path first
       const rows = boardToRows(board);
       const sheetName = sanitiseName(board.name).slice(0, 31);
       const files = buildXlsxFiles(rows, sheetName);
       const zipBytes = await buildZipAsync(files);
-      const blob = new Blob([zipBytes], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-      });
-      downloadBlob(blob, sanitiseName(board.name) + '.xlsx');
-      toast('Excel file exported ✓');
+      const filename = sanitiseName(board.name) + '.xlsx';
+      if (window.webkit?.messageHandlers?.nativeBridge) {
+        // Convert Uint8Array to string for the bridge
+        const str = Array.from(zipBytes).map(b => String.fromCharCode(b)).join('');
+        window.webkit.messageHandlers.nativeBridge.postMessage({
+          action: 'saveFile', filename, content: str,
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        });
+        toast('Choose where to save your Excel file');
+      } else {
+        const blob = new Blob([zipBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        downloadBlob(blob, filename);
+        toast('Excel file exported ✓');
+      }
     } catch(e) {
-      // Fallback to sync path
       exportXLSX(board);
     }
   });
@@ -4202,79 +4217,25 @@ document.getElementById('rpt-export-pdf').addEventListener('click', () => {
   const preview = document.getElementById('rpt-preview');
   if (!preview.querySelector('.rpt-header')) { toast('Generate a report first'); return; }
 
-  const title      = preview.dataset.reportTitle || 'Ahab Report';
-  const dateStr    = preview.dataset.reportDate  || '';
+  const title       = preview.dataset.reportTitle || 'Ahab Report';
+  const dateStr     = preview.dataset.reportDate  || '';
   const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#6c63ff';
+  const printHtml   = buildPrintHtml(title, dateStr, preview.innerHTML, accentColor);
 
-  const isAppScheme = location.protocol === 'app:' || location.protocol === 'file:';
+  const hasNativeBridge = !!(window.webkit?.messageHandlers?.nativeBridge);
 
-  const printCSS = `
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, 'Helvetica Neue', sans-serif; font-size: 12px;
-           color: #1a1a2e !important; background: #fff !important; line-height: 1.6; }
-    #titlebar, #app-body, #toast, .modal-overlay, #task-panel,
-    #settings-panel, #user-menu, #auth-loading { display: none !important; }
-    #print-report-area { display: block !important; padding: 40px 48px; }
-    h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; color: #0f0f2d; }
-    .rpt-meta { font-size: 11px; color: #888; margin-bottom: 20px; }
-    .rpt-stats { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
-    .rpt-stat { background: #f4f4f8; border-radius: 8px; padding: 10px 14px; min-width: 90px; }
-    .s-num { font-size: 20px; font-weight: 700; color: ${accentColor}; line-height: 1; }
-    .s-lbl { font-size: 10px; color: #888; margin-top: 2px; }
-    .rpt-group-label { font-size: 10px; font-weight: 700; letter-spacing: 1px;
-                       text-transform: uppercase; color: #888; margin: 18px 0 8px; padding-left: 8px; }
-    .rpt-task-block { border: 1px solid #e0e0e8; border-radius: 8px; margin-bottom: 14px;
-                      overflow: hidden; page-break-inside: avoid; }
-    .rpt-task-title { background: #f4f4f8; padding: 8px 12px; font-weight: 600; font-size: 12px;
-                      display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e0e0e8; }
-    .rpt-task-badge { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
-    .rpt-event { display: flex; gap: 10px; padding: 6px 12px;
-                 border-bottom: 1px solid #f0f0f4; align-items: flex-start; }
-    .rpt-event:last-child { border-bottom: none; }
-    .rpt-event-icon { font-size: 12px; width: 16px; text-align: center; flex-shrink: 0; }
-    .rpt-event-text { font-size: 11px; color: #444; line-height: 1.5; }
-    .rpt-event-text strong { color: #1a1a2e; }
-    .rpt-event-text em { font-style: italic; color: #666; }
-    .rpt-event-time { font-size: 10px; color: #aaa; margin-top: 1px; }
-    @page { margin: 1.5cm; size: A4; }
-  `;
-
-  if (isAppScheme) {
-    // WKWebView: inject a hidden print area and print-only stylesheet, then window.print()
-    let printArea = document.getElementById('print-report-area');
-    if (!printArea) {
-      printArea = document.createElement('div');
-      printArea.id = 'print-report-area';
-      printArea.style.display = 'none';
-      document.body.appendChild(printArea);
-    }
-    printArea.innerHTML = `
-      <h1>${esc(title)}</h1>
-      <div class="rpt-meta">Generated ${new Date().toLocaleString()} &nbsp;·&nbsp; ${esc(dateStr)}</div>
-      ${preview.innerHTML}`;
-
-    let printStyle = document.getElementById('print-report-style');
-    if (!printStyle) {
-      printStyle = document.createElement('style');
-      printStyle.id = 'print-report-style';
-      printStyle.media = 'print';
-      document.head.appendChild(printStyle);
-    }
-    printStyle.textContent = printCSS;
-
-    window.print();
-
-    // Clean up after print dialog closes
-    setTimeout(() => {
-      printArea.innerHTML = '';
-      printStyle.textContent = '';
-    }, 3000);
-    toast('Use "Save as PDF" in the print dialog');
+  if (hasNativeBridge) {
+    // macOS .app — hand off to Swift for native print dialog
+    window.webkit.messageHandlers.nativeBridge.postMessage({
+      action: 'printHTML',
+      html:   printHtml,
+      title:  title,
+    });
+    toast('Opening print dialog…');
     return;
   }
 
-  // Browser: open in new window
-  const printHtml = buildPrintHtml(title, dateStr, preview.innerHTML, accentColor);
+  // Browser — open in new window
   const blob = new Blob([printHtml], { type: 'text/html' });
   const url  = URL.createObjectURL(blob);
   const win  = window.open(url, '_blank');
@@ -4383,25 +4344,27 @@ document.getElementById('rpt-export-rtf').addEventListener('click', () => {
   rtf += `}`;
 
   const filename = `${board.name.replace(/[^a-z0-9]/gi,'_')}_report.rtf`;
-  const isAppScheme = location.protocol === 'app:' || location.protocol === 'file:';
+  const hasNativeBridge = !!(window.webkit?.messageHandlers?.nativeBridge);
 
-  if (isAppScheme) {
-    // WKWebView can't open blob: URLs — use data: URI instead
-    const b64 = btoa(unescape(encodeURIComponent(rtf)));
-    const a = document.createElement('a');
-    a.href = 'data:application/rtf;base64,' + b64;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  } else {
-    const blob = new Blob([rtf], { type: 'application/rtf' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  if (hasNativeBridge) {
+    // macOS .app — hand off to Swift for NSSavePanel
+    window.webkit.messageHandlers.nativeBridge.postMessage({
+      action:   'saveFile',
+      filename: filename,
+      content:  rtf,
+      mimeType: 'application/rtf',
+    });
+    toast('Choose where to save your RTF report');
+    return;
   }
+
+  // Browser — blob download
+  const blob = new Blob([rtf], { type: 'application/rtf' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
   toast('RTF report downloaded');
 });
 
