@@ -965,42 +965,42 @@
   .rpt-check input { accent-color: var(--accent); cursor: pointer; }
 
   /* Report preview content */
-  .rpt-header { margin-bottom: 20px; padding-bottom: 14px; border-bottom: 2px solid var(--border); }
-  .rpt-header h1 { font-size: 1.2em; font-weight: 700; color: var(--text); margin: 0 0 4px; }
-  .rpt-header .rpt-meta { font-size: 0.82em; color: var(--text3); }
-  .rpt-stats { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
-  .rpt-stat { background: var(--surface2); border-radius: var(--radius-sm); padding: 10px 14px; min-width: 80px; }
-  .rpt-stat .s-num { font-size: 1.5em; font-weight: 700; color: var(--accent); line-height: 1; }
-  .rpt-stat .s-lbl { font-size: 0.75em; color: var(--text3); margin-top: 3px; }
-  .rpt-task-block { margin-bottom: 22px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .rpt-header { margin-bottom: 14px; padding-bottom: 10px; border-bottom: 2px solid var(--border); }
+  .rpt-header h1 { font-size: 1.1em; font-weight: 700; color: var(--text); margin: 0 0 3px; }
+  .rpt-header .rpt-meta { font-size: 0.79em; color: var(--text3); }
+  .rpt-stats { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .rpt-stat { background: var(--surface2); border-radius: var(--radius-sm); padding: 6px 10px; min-width: 70px; }
+  .rpt-stat .s-num { font-size: 1.2em; font-weight: 700; color: var(--accent); line-height: 1; }
+  .rpt-stat .s-lbl { font-size: 0.68em; color: var(--text3); margin-top: 2px; }
+  .rpt-task-block { margin-bottom: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
   .rpt-task-title {
-    padding: 10px 14px; background: var(--surface2);
-    font-weight: 600; font-size: 0.93em; color: var(--text);
-    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; background: var(--surface2);
+    font-weight: 600; font-size: 0.86em; color: var(--text);
+    display: flex; align-items: center; gap: 6px;
     border-bottom: 1px solid var(--border);
   }
   .rpt-task-badge {
-    font-size: 0.72em; padding: 2px 8px; border-radius: 10px;
+    font-size: 0.68em; padding: 1px 6px; border-radius: 10px;
     font-weight: 600; flex-shrink: 0;
   }
-  .rpt-events { padding: 4px 0; }
+  .rpt-events { padding: 2px 0; }
   .rpt-event {
-    display: flex; gap: 10px; padding: 7px 14px;
-    border-bottom: 1px solid var(--border); align-items: flex-start;
+    display: flex; gap: 8px; padding: 4px 10px;
+    border-bottom: 1px solid var(--border); align-items: baseline;
   }
   .rpt-event:last-child { border-bottom: none; }
-  .rpt-event-icon { font-size: 13px; flex-shrink: 0; margin-top: 1px; width: 18px; text-align: center; }
-  .rpt-event-body { flex: 1; min-width: 0; }
-  .rpt-event-text { color: var(--text2); font-size: 0.86em; line-height: 1.5; }
+  .rpt-event-icon { font-size: 11px; flex-shrink: 0; width: 14px; text-align: center; }
+  .rpt-event-body { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+  .rpt-event-text { color: var(--text2); font-size: 0.82em; line-height: 1.4; }
   .rpt-event-text strong { color: var(--text); }
-  .rpt-event-time { font-size: 0.75em; color: var(--text3); margin-top: 2px; }
+  .rpt-event-time { font-size: 0.72em; color: var(--text3); white-space: nowrap; flex-shrink: 0; }
   .rpt-group-label {
-    font-size: 0.72em; font-weight: 600; letter-spacing: 0.8px;
+    font-size: 0.68em; font-weight: 600; letter-spacing: 0.8px;
     text-transform: uppercase; color: var(--text3);
-    margin: 14px 0 8px;
+    margin: 10px 0 5px;
   }
   .rpt-group-label:first-child { margin-top: 0; }
-  .rpt-empty { color: var(--text3); font-size: 0.86em; font-style: italic; padding: 8px 14px; }
+  .rpt-empty { color: var(--text3); font-size: 0.82em; font-style: italic; padding: 5px 10px; }
 
   #toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(14px); background: var(--toast-bg); backdrop-filter: blur(20px); border: 1px solid var(--border); border-radius: 8px; padding: 9px 16px; font-size: 0.9em; color: var(--text2); box-shadow: 0 4px 16px var(--shadow-dd); opacity: 0; z-index: 2000; pointer-events: none; white-space: nowrap; }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -1382,8 +1382,42 @@
 <!-- Sign-in modal -->
 <div class="modal-overlay" id="modal-signin" style="z-index:1100">
   <div class="modal" style="width:360px">
-    <div class="signin-logo">⚓</div>
-    <div class="signin-title">Welcome to Ahab</div>
+    <!-- Stylized wordmark -->
+    <div style="margin-bottom:24px;display:flex;flex-direction:column;align-items:center;gap:10px">
+      <svg width="56" height="56" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="anchorGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#6c63ff"/>
+            <stop offset="100%" stop-color="#ff6584"/>
+          </linearGradient>
+        </defs>
+        <!-- Anchor ring -->
+        <circle cx="28" cy="16" r="6" stroke="url(#anchorGrad)" stroke-width="3" fill="none"/>
+        <!-- Anchor shaft -->
+        <line x1="28" y1="22" x2="28" y2="44" stroke="url(#anchorGrad)" stroke-width="3" stroke-linecap="round"/>
+        <!-- Anchor crossbar -->
+        <line x1="16" y1="29" x2="40" y2="29" stroke="url(#anchorGrad)" stroke-width="3" stroke-linecap="round"/>
+        <!-- Anchor flukes left -->
+        <path d="M28 44 C28 44 14 40 12 33" stroke="url(#anchorGrad)" stroke-width="3" stroke-linecap="round" fill="none"/>
+        <!-- Anchor flukes right -->
+        <path d="M28 44 C28 44 42 40 44 33" stroke="url(#anchorGrad)" stroke-width="3" stroke-linecap="round" fill="none"/>
+        <!-- Fluke tips -->
+        <circle cx="12" cy="33" r="2.5" fill="url(#anchorGrad)"/>
+        <circle cx="44" cy="33" r="2.5" fill="url(#anchorGrad)"/>
+      </svg>
+      <svg width="100" height="36" viewBox="0 0 100 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="textGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#6c63ff"/>
+            <stop offset="100%" stop-color="#ff6584"/>
+          </linearGradient>
+        </defs>
+        <text x="50" y="28" text-anchor="middle"
+              font-family="-apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif"
+              font-size="32" font-weight="700" letter-spacing="-1"
+              fill="url(#textGrad)">Ahab</text>
+      </svg>
+    </div>
     <div class="signin-sub">Sign in to sync your boards across all your devices and share with collaborators.</div>
     <button class="btn-google" id="btn-google-signin">
       <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
@@ -4221,8 +4255,8 @@ document.getElementById('rpt-generate').addEventListener('click', () => {
               <div class="rpt-event">
                 <div class="rpt-event-icon">${eventIcon(ev.type)}</div>
                 <div class="rpt-event-body">
-                  <div class="rpt-event-text">${eventLabel(ev, board)}</div>
-                  <div class="rpt-event-time">${fmtTs(ev.ts)}</div>
+                  <span class="rpt-event-text">${eventLabel(ev, board)}</span>
+                  <span class="rpt-event-time">${fmtTs(ev.ts)}</span>
                 </div>
               </div>`;
         });
@@ -4277,31 +4311,33 @@ function buildPrintHtml(title, dateStr, bodyHtml, accentColor) {
 <html><head><meta charset="UTF-8"><title>${title}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, 'Helvetica Neue', sans-serif; font-size: 12px;
-         color: #1a1a2e; background: #fff; padding: 40px 48px; line-height: 1.6; }
-  h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; color: #0f0f2d; }
-  .rpt-meta { font-size: 11px; color: #888; margin-bottom: 20px; }
-  .rpt-stats { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
-  .rpt-stat { background: #f4f4f8; border-radius: 8px; padding: 10px 14px; min-width: 90px; }
-  .s-num { font-size: 20px; font-weight: 700; color: ${accentColor}; line-height: 1; }
-  .s-lbl { font-size: 10px; color: #888; margin-top: 2px; }
-  .rpt-group-label { font-size: 10px; font-weight: 700; letter-spacing: 1px;
-                     text-transform: uppercase; color: #888; margin: 18px 0 8px; padding-left: 8px; }
-  .rpt-task-block { border: 1px solid #e0e0e8; border-radius: 8px; margin-bottom: 14px;
+  body { font-family: -apple-system, 'Helvetica Neue', sans-serif; font-size: 10px;
+         color: #1a1a2e; background: #fff; padding: 20px 28px; line-height: 1.35; }
+  h1 { font-size: 15px; font-weight: 700; margin-bottom: 2px; color: #0f0f2d; }
+  .rpt-meta { font-size: 9px; color: #999; margin-bottom: 10px; }
+  .rpt-stats { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  .rpt-stat { background: #f4f4f8; border-radius: 5px; padding: 4px 8px; min-width: 65px; }
+  .s-num { font-size: 15px; font-weight: 700; color: ${accentColor}; line-height: 1; }
+  .s-lbl { font-size: 8px; color: #999; margin-top: 1px; }
+  .rpt-group-label { font-size: 8px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+                     color: #aaa; margin: 8px 0 3px; padding-left: 5px; }
+  .rpt-task-block { border: 1px solid #e4e4ec; border-radius: 4px; margin-bottom: 5px;
                     overflow: hidden; page-break-inside: avoid; }
-  .rpt-task-title { background: #f4f4f8; padding: 8px 12px; font-weight: 600; font-size: 12px;
-                    display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e0e0e8; }
-  .rpt-task-badge { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
-  .rpt-event { display: flex; gap: 10px; padding: 6px 12px;
-               border-bottom: 1px solid #f0f0f4; align-items: flex-start; }
+  .rpt-task-title { background: #f7f7fb; padding: 3px 8px; font-weight: 600; font-size: 9.5px;
+                    display: flex; align-items: center; gap: 5px; border-bottom: 1px solid #e4e4ec; }
+  .rpt-task-badge { font-size: 8px; padding: 1px 5px; border-radius: 8px; font-weight: 600; }
+  .rpt-events { padding: 1px 0; }
+  .rpt-event { display: flex; gap: 5px; padding: 2px 8px; border-bottom: 1px solid #f4f4f8;
+               align-items: baseline; }
   .rpt-event:last-child { border-bottom: none; }
-  .rpt-event-icon { font-size: 12px; width: 16px; text-align: center; flex-shrink: 0; }
-  .rpt-event-text { font-size: 11px; color: #444; line-height: 1.5; }
-  .rpt-event-text strong { color: #1a1a2e; }
+  .rpt-event-icon { font-size: 9px; width: 11px; text-align: center; flex-shrink: 0; }
+  .rpt-event-body { flex: 1; display: flex; gap: 5px; align-items: baseline; flex-wrap: wrap; }
+  .rpt-event-text { font-size: 9px; color: #444; line-height: 1.3; }
+  .rpt-event-text strong { color: #111; }
   .rpt-event-text em { font-style: italic; color: #666; }
-  .rpt-event-time { font-size: 10px; color: #aaa; margin-top: 1px; }
+  .rpt-event-time { font-size: 8px; color: #bbb; white-space: nowrap; flex-shrink: 0; }
   .rpt-header h1, .rpt-header .rpt-meta { display: none; }
-  @page { margin: 1.5cm; size: A4; }
+  @page { margin: 0.8cm 1cm; size: A4; }
 </style></head><body>
 <h1>${title}</h1>
 <div class="rpt-meta">Generated ${new Date().toLocaleString()} &nbsp;·&nbsp; ${dateStr}</div>
