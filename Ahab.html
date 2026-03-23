@@ -4472,16 +4472,16 @@ document.getElementById('um-signout').addEventListener('click', async () => {
 async function renderEditorList(board) {
   const list = document.getElementById('editor-list');
   if (!list) return;
-  const editors = board._editors || []; // [{uid, email, name, role}]
+  const editors = board._editors || [];
+  const invites = board._invites || [];
+  const isOwner = board._owner === MY_USER_ID;
 
-  if (editors.length === 0) {
+  if (editors.length === 0 && invites.length === 0) {
     list.innerHTML = `<div style="font-size:0.82em;color:var(--text3);padding:4px 0">No collaborators yet.</div>`;
     return;
   }
 
-  const isOwner = board._owner === MY_USER_ID;
-
-  list.innerHTML = editors.map(ed => {
+  const editorRows = editors.map(ed => {
     const color = AVATAR_BG[Math.abs((ed.uid||'x').charCodeAt(0)) % AVATAR_BG.length];
     const ini   = initials(ed.name || ed.email || '?');
     return `
@@ -4492,17 +4492,33 @@ async function renderEditorList(board) {
           <div class="editor-email">${esc(ed.email || ed.uid || '')}</div>
         </div>
         <div class="editor-role">${ed.role === 'view' ? 'Viewer' : 'Editor'}</div>
-        ${isOwner ? `<button class="editor-remove" data-uid="${esc(ed.uid||'')}">✕</button>` : ''}
+        ${isOwner ? `<button class="editor-remove" data-type="editor" data-uid="${esc(ed.uid||'')}">✕</button>` : ''}
       </div>`;
   }).join('');
 
+  const inviteRows = invites.map(inv => `
+    <div class="editor-row" data-email="${esc(inv.email)}">
+      <div class="editor-avatar" style="background:var(--surface3);color:var(--text3);font-size:12px">✉</div>
+      <div class="editor-info">
+        <div class="editor-name">${esc(inv.email)}</div>
+        <div class="editor-email" style="color:var(--accent)">Invite pending</div>
+      </div>
+      <div class="editor-role">${inv.role === 'view' ? 'Viewer' : 'Editor'}</div>
+      ${isOwner ? `<button class="editor-remove" data-type="invite" data-email="${esc(inv.email)}">✕</button>` : ''}
+    </div>`).join('');
+
+  list.innerHTML = editorRows + inviteRows;
+
   list.querySelectorAll('.editor-remove').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const uid_ = btn.dataset.uid;
-      board._editors = (board._editors || []).filter(e => e.uid !== uid_);
+      if (btn.dataset.type === 'editor') {
+        board._editors = (board._editors || []).filter(e => e.uid !== btn.dataset.uid);
+      } else {
+        board._invites = (board._invites || []).filter(i => i.email !== btn.dataset.email);
+      }
       save();
       await renderEditorList(board);
-      document.getElementById('share-status').textContent = '✓ Collaborator removed';
+      document.getElementById('share-status').textContent = '✓ Removed';
       setTimeout(() => { const s = document.getElementById('share-status'); if(s) s.textContent=''; }, 2000);
     });
   });
@@ -4522,42 +4538,54 @@ document.getElementById('btn-invite').addEventListener('click', async () => {
   btn.disabled = true; btn.textContent = 'Inviting…';
 
   try {
-    // Look up the user's UID by email from userProfiles
-    const profileSnap = await db.collection('userProfiles')
-      .where('email', '==', email).limit(1).get();
+    if (!board._editors) board._editors = [];
+    if (!board._invites) board._invites = [];
 
-    if (profileSnap.empty) {
-      // User hasn't signed in yet — store invite by email, resolved on their next sign-in
-      if (!board._invites) board._invites = [];
-      const already = board._invites.find(i => i.email === email);
-      if (!already) {
-        board._invites.push({ email, role: roleInput.value, invitedAt: Date.now() });
+    // Always store the pending invite so it works even if the user hasn't signed in yet
+    const alreadyEditor = board._editors.find(e => e.email === email);
+    const alreadyInvited = board._invites.find(i => i.email === email);
+    if (alreadyEditor) {
+      document.getElementById('share-status').textContent = `${email} is already a collaborator`;
+      btn.disabled = false; btn.textContent = 'Invite'; return;
+    }
+    if (alreadyInvited) {
+      document.getElementById('share-status').textContent = `${email} already has a pending invite`;
+      btn.disabled = false; btn.textContent = 'Invite'; return;
+    }
+
+    // Try to look up their profile if they've already signed in
+    let resolved = false;
+    try {
+      const profileSnap = await Promise.race([
+        db.collection('userProfiles').where('email', '==', email).limit(1).get(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000))
+      ]);
+      if (!profileSnap.empty) {
+        const profile = profileSnap.docs[0].data();
+        board._editors.push({
+          uid: profile.uid, email: profile.email,
+          name: profile.name, role: roleInput.value, addedAt: Date.now(),
+        });
+        resolved = true;
+        document.getElementById('share-status').textContent =
+          `✓ ${profile.name || email} added as ${roleInput.value === 'edit' ? 'editor' : 'viewer'}`;
       }
+    } catch(lookupErr) {
+      // Profile lookup failed (index missing, permissions, timeout) — fall through to pending invite
+      console.warn('Profile lookup failed:', lookupErr.message);
+    }
+
+    if (!resolved) {
+      // Store as pending — activates when they open a share link and sign in
+      board._invites.push({ email, role: roleInput.value, invitedAt: Date.now() });
       document.getElementById('share-status').textContent =
-        `✓ Invite recorded for ${email} — they'll get access when they sign in`;
-    } else {
-      const profile = profileSnap.docs[0].data();
-      if (!board._editors) board._editors = [];
-      const already = board._editors.find(e => e.uid === profile.uid);
-      if (already) {
-        document.getElementById('share-status').textContent = `${email} is already a collaborator`;
-        btn.disabled = false; btn.textContent = 'Invite';
-        return;
-      }
-      board._editors.push({
-        uid:   profile.uid,
-        email: profile.email,
-        name:  profile.name,
-        role:  roleInput.value,
-        addedAt: Date.now(),
-      });
-      document.getElementById('share-status').textContent = `✓ ${profile.name || email} added`;
+        `✓ Invite sent to ${email} — they'll get access when they open your share link`;
     }
 
     save();
     emailInput.value = '';
     await renderEditorList(board);
-    setTimeout(() => { const s = document.getElementById('share-status'); if(s) s.textContent=''; }, 3000);
+    setTimeout(() => { const s = document.getElementById('share-status'); if(s) s.textContent=''; }, 3500);
   } catch(e) {
     document.getElementById('share-status').textContent = '✗ Error: ' + e.message;
   }
