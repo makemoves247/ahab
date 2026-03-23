@@ -863,6 +863,60 @@
   #dd-move-task::-webkit-scrollbar { width: 4px; }
   #dd-move-task::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
 
+  /* ── REPORT MODAL ── */
+  .rpt-preset {
+    padding: 5px 12px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--input-bg);
+    color: var(--text2); font-family: var(--font-body); font-size: 0.82em;
+    cursor: pointer; transition: all 0.12s;
+  }
+  .rpt-preset:hover { border-color: var(--accent); color: var(--accent); }
+  .rpt-preset.active { background: rgba(108,99,255,0.12); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .rpt-check {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.86em; color: var(--text2); cursor: pointer;
+    user-select: none;
+  }
+  .rpt-check input { accent-color: var(--accent); cursor: pointer; }
+
+  /* Report preview content */
+  .rpt-header { margin-bottom: 20px; padding-bottom: 14px; border-bottom: 2px solid var(--border); }
+  .rpt-header h1 { font-size: 1.2em; font-weight: 700; color: var(--text); margin: 0 0 4px; }
+  .rpt-header .rpt-meta { font-size: 0.82em; color: var(--text3); }
+  .rpt-stats { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+  .rpt-stat { background: var(--surface2); border-radius: var(--radius-sm); padding: 10px 14px; min-width: 80px; }
+  .rpt-stat .s-num { font-size: 1.5em; font-weight: 700; color: var(--accent); line-height: 1; }
+  .rpt-stat .s-lbl { font-size: 0.75em; color: var(--text3); margin-top: 3px; }
+  .rpt-task-block { margin-bottom: 22px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .rpt-task-title {
+    padding: 10px 14px; background: var(--surface2);
+    font-weight: 600; font-size: 0.93em; color: var(--text);
+    display: flex; align-items: center; gap: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .rpt-task-badge {
+    font-size: 0.72em; padding: 2px 8px; border-radius: 10px;
+    font-weight: 600; flex-shrink: 0;
+  }
+  .rpt-events { padding: 4px 0; }
+  .rpt-event {
+    display: flex; gap: 10px; padding: 7px 14px;
+    border-bottom: 1px solid var(--border); align-items: flex-start;
+  }
+  .rpt-event:last-child { border-bottom: none; }
+  .rpt-event-icon { font-size: 13px; flex-shrink: 0; margin-top: 1px; width: 18px; text-align: center; }
+  .rpt-event-body { flex: 1; min-width: 0; }
+  .rpt-event-text { color: var(--text2); font-size: 0.86em; line-height: 1.5; }
+  .rpt-event-text strong { color: var(--text); }
+  .rpt-event-time { font-size: 0.75em; color: var(--text3); margin-top: 2px; }
+  .rpt-group-label {
+    font-size: 0.72em; font-weight: 600; letter-spacing: 0.8px;
+    text-transform: uppercase; color: var(--text3);
+    margin: 14px 0 8px;
+  }
+  .rpt-group-label:first-child { margin-top: 0; }
+  .rpt-empty { color: var(--text3); font-size: 0.86em; font-style: italic; padding: 8px 14px; }
+
   #toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(14px); background: var(--toast-bg); backdrop-filter: blur(20px); border: 1px solid var(--border); border-radius: 8px; padding: 9px 16px; font-size: 0.9em; color: var(--text2); box-shadow: 0 4px 16px var(--shadow-dd); opacity: 0; z-index: 2000; pointer-events: none; white-space: nowrap; }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
@@ -876,6 +930,7 @@
   <span class="titlebar-center">Ahab</span>
   <div class="titlebar-actions">
     <div id="presence-bar"></div>
+    <button class="tb-btn secondary" id="btn-report" title="Generate report">📋 Report</button>
     <button class="tb-btn secondary" id="btn-share" title="Share board">⬆ Share</button>
     <button class="tb-btn secondary" id="btn-add-group-toolbar">＋ Group</button>
     <button class="tb-btn primary" id="btn-add-task-toolbar">＋ Task</button>
@@ -1169,6 +1224,63 @@
   </div>
 </div>
 
+<!-- Report modal -->
+<div class="modal-overlay" id="modal-report">
+  <div class="modal" style="width:640px;max-height:88vh;display:flex;flex-direction:column;padding:0;overflow:hidden">
+    <!-- Header -->
+    <div style="padding:22px 24px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
+      <h2 style="margin-bottom:16px">Activity Report</h2>
+      <!-- Board/Group scope -->
+      <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <div style="flex:1;min-width:140px">
+          <label class="modal-label">Board</label>
+          <select class="modal-select" id="rpt-board" style="margin-top:4px"></select>
+        </div>
+        <div style="flex:1;min-width:140px">
+          <label class="modal-label">Group</label>
+          <select class="modal-select" id="rpt-group" style="margin-top:4px">
+            <option value="all">All groups</option>
+          </select>
+        </div>
+      </div>
+      <!-- Date range -->
+      <div style="margin-bottom:10px">
+        <label class="modal-label">Date range</label>
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center">
+          <button class="rpt-preset active" data-preset="week">Last 7 days</button>
+          <button class="rpt-preset" data-preset="month">Last 30 days</button>
+          <button class="rpt-preset" data-preset="all">All time</button>
+          <button class="rpt-preset" data-preset="custom">Custom</button>
+        </div>
+        <div id="rpt-custom-dates" style="display:none;margin-top:8px;display:none;gap:8px;align-items:center">
+          <input type="date" class="modal-input" id="rpt-from" style="flex:1" />
+          <span style="color:var(--text3);font-size:0.86em">to</span>
+          <input type="date" class="modal-input" id="rpt-to" style="flex:1" />
+        </div>
+      </div>
+      <!-- Checkboxes for what to include -->
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px">
+        <label class="rpt-check"><input type="checkbox" id="rpt-inc-status" checked> Status changes</label>
+        <label class="rpt-check"><input type="checkbox" id="rpt-inc-fields" checked> Field edits</label>
+        <label class="rpt-check"><input type="checkbox" id="rpt-inc-todos" checked> To-do activity</label>
+        <label class="rpt-check"><input type="checkbox" id="rpt-inc-notes" checked> Notes</label>
+        <label class="rpt-check"><input type="checkbox" id="rpt-inc-created" checked> New tasks</label>
+      </div>
+    </div>
+    <!-- Preview area -->
+    <div id="rpt-preview" style="flex:1;overflow-y:auto;padding:20px 24px;font-size:0.9em;line-height:1.6;min-height:200px">
+      <div style="color:var(--text3);text-align:center;padding:40px 0">Configure filters above and click Generate Report</div>
+    </div>
+    <!-- Footer actions -->
+    <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0">
+      <button class="modal-btn cancel" id="rpt-close">Close</button>
+      <button class="modal-btn cancel" id="rpt-export-rtf">Export RTF</button>
+      <button class="modal-btn cancel" id="rpt-export-pdf">Export PDF</button>
+      <button class="modal-btn confirm" id="rpt-generate">Generate Report</button>
+    </div>
+  </div>
+</div>
+
 <!-- Share modal -->
 <div class="modal-overlay" id="modal-share">
   <div class="modal" style="width:420px">
@@ -1345,13 +1457,26 @@ function migrate(data) {
       if (!t.updatedAt) t.updatedAt = Date.now();
       if (!t.notes) t.notes = [];
       if (!t.todos) t.todos = [];
+      if (!t.activity) t.activity = [];
     }));
   });
   return data;
 }
 
-// Stamp updatedAt on a task whenever it changes
+// Stamp updatedAt and optionally log an activity event
 function touch(task) { task.updatedAt = Date.now(); }
+
+function logActivity(task, type, details = {}) {
+  if (!task.activity) task.activity = [];
+  task.activity.push({
+    id:      uid(),
+    type,           // 'field_change'|'status_change'|'done_toggle'|'note_added'|'note_deleted'|'todo_added'|'todo_done'|'todo_undone'|'todo_deleted'|'assignee_change'|'created'
+    ts:      Date.now(),
+    ...details,
+  });
+  // Keep at most 500 events per task to avoid bloating storage
+  if (task.activity.length > 500) task.activity = task.activity.slice(-500);
+}
 
 function load() {
   try { const d=JSON.parse(localStorage.getItem(LS_KEY)); if(d?.boards) return migrate(d); } catch(e){}
@@ -1362,22 +1487,22 @@ function defaultData() {
   const b1=makeBoard('Product Roadmap','#6c63ff');
   const g1=makeGroup('Sprint 1','#6c63ff');
   g1.tasks=[
-    {id:uid(),name:'Design onboarding flow', status:'inprogress',priority:'high',    assignees:[],due:'2026-04-01',done:false,updatedAt:Date.now(),notes:[],todos:[]},
-    {id:uid(),name:'API integration for auth',status:'todo',      priority:'critical',assignees:[],due:'2026-04-05',done:false,updatedAt:Date.now(),notes:[],todos:[]},
-    {id:uid(),name:'Write unit tests',        status:'stuck',     priority:'medium',  assignees:[],due:'2026-03-28',done:false,updatedAt:Date.now(),notes:[],todos:[]},
+    {id:uid(),name:'Design onboarding flow', status:'inprogress',priority:'high',    assignees:[],due:'2026-04-01',done:false,updatedAt:Date.now(),notes:[],todos:[],activity:[]},
+    {id:uid(),name:'API integration for auth',status:'todo',      priority:'critical',assignees:[],due:'2026-04-05',done:false,updatedAt:Date.now(),notes:[],todos:[],activity:[]},
+    {id:uid(),name:'Write unit tests',        status:'stuck',     priority:'medium',  assignees:[],due:'2026-03-28',done:false,updatedAt:Date.now(),notes:[],todos:[],activity:[]},
   ];
   const g2=makeGroup('Backlog','#f7971e');
   g2.tasks=[
-    {id:uid(),name:'Dark mode toggle',  status:'todo',  priority:'low', assignees:[],due:'',          done:false,updatedAt:Date.now(),notes:[],todos:[]},
-    {id:uid(),name:'Performance audit', status:'review',priority:'high',assignees:[],due:'2026-04-10',done:false,updatedAt:Date.now(),notes:[],todos:[]},
+    {id:uid(),name:'Dark mode toggle',  status:'todo',  priority:'low', assignees:[],due:'',          done:false,updatedAt:Date.now(),notes:[],todos:[],activity:[]},
+    {id:uid(),name:'Performance audit', status:'review',priority:'high',assignees:[],due:'2026-04-10',done:false,updatedAt:Date.now(),notes:[],todos:[],activity:[]},
   ];
   b1.groups=[g1,g2];
 
   const b2=makeBoard('Marketing Q2','#ff6584');
   const g3=makeGroup('Campaigns','#ff6584');
   g3.tasks=[
-    {id:uid(),name:'Launch email sequence', status:'inprogress',priority:'high',  assignees:[],due:'2026-04-15',done:false,updatedAt:Date.now(),notes:[],todos:[]},
-    {id:uid(),name:'Social media calendar', status:'done',      priority:'medium',assignees:[],due:'2026-03-20',done:true, updatedAt:Date.now(),notes:[],todos:[]},
+    {id:uid(),name:'Launch email sequence', status:'inprogress',priority:'high',  assignees:[],due:'2026-04-15',done:false,updatedAt:Date.now(),notes:[],todos:[],activity:[]},
+    {id:uid(),name:'Social media calendar', status:'done',      priority:'medium',assignees:[],due:'2026-03-20',done:true, updatedAt:Date.now(),notes:[],todos:[],activity:[]},
   ];
   b2.groups=[g3];
 
@@ -1687,10 +1812,10 @@ function renderBoard(){
     btn.addEventListener('click',e=>{e.stopPropagation();const g=btn.closest('.group');g.classList.toggle('collapsed');btn.textContent=g.classList.contains('collapsed')?'▸':'▾';});
   });
   area.querySelectorAll('.task-check').forEach(el=>{
-    el.addEventListener('click',e=>{e.stopPropagation();const t=findTask(el.dataset.gid,el.dataset.tid);if(t){t.done=!t.done;if(t.done)t.status=getStatusDoneId(ab());touch(t);save();render();}});
+    el.addEventListener('click',e=>{e.stopPropagation();const t=findTask(el.dataset.gid,el.dataset.tid);if(t){const wasDone=t.done;t.done=!t.done;if(t.done)t.status=getStatusDoneId(ab());logActivity(t,'done_toggle',{done:t.done,prevDone:wasDone});touch(t);save();render();}});
   });
   area.querySelectorAll('.task-name').forEach(inp=>{
-    inp.addEventListener('change',()=>{const t=findTask(inp.dataset.gid,inp.dataset.tid);if(t){t.name=inp.value;touch(t);save();}});
+    inp.addEventListener('change',()=>{const t=findTask(inp.dataset.gid,inp.dataset.tid);if(t){const prev=t.name;t.name=inp.value;logActivity(t,'field_change',{field:'name',prev,next:t.name});touch(t);save();}});
     // Single click opens panel; double-click enables inline edit
     inp.addEventListener('click',e=>{
       e.stopPropagation();
@@ -1710,7 +1835,7 @@ function renderBoard(){
     el.addEventListener('click',e=>{e.stopPropagation();showSelectDD(e,el.dataset.gid,el.dataset.tid,el.dataset.col);});
   });
   area.querySelectorAll('.text-cell-input').forEach(inp=>{
-    inp.addEventListener('change',()=>{const t=findTask(inp.dataset.gid,inp.dataset.tid);if(t){t[inp.dataset.col]=inp.value;touch(t);save();}});
+    inp.addEventListener('change',()=>{const t=findTask(inp.dataset.gid,inp.dataset.tid);if(t){const prev=t[inp.dataset.col];t[inp.dataset.col]=inp.value;logActivity(t,'field_change',{field:inp.dataset.col,prev,next:inp.value});touch(t);save();}});
     inp.addEventListener('click',e=>e.stopPropagation());
   });
   area.querySelectorAll('.add-assignee').forEach(el=>{
@@ -1842,11 +1967,15 @@ function showSelectDD(e,gid,tid,colId){
     item.addEventListener('click',ev=>{
       ev.stopPropagation();
       const t=findTask(gid,tid);if(!t)return;
+      const prev=t[colId];
       t[colId]=item.dataset.val;
       if(colId==='status'){
         const doneVal=getStatusDoneId(board);
         t.done=(item.dataset.val===doneVal);
       }
+      const prevLabel=findVal(board,colId,prev)?.label||prev||'—';
+      const nextLabel=findVal(board,colId,item.dataset.val)?.label||item.dataset.val||'—';
+      logActivity(t, colId==='status'?'status_change':'field_change', {field:colId,prev:prevLabel,next:nextLabel});
       touch(t);save();render();closeAllDD();
     });
   });
@@ -2205,7 +2334,7 @@ document.getElementById('mt-confirm').addEventListener('click',()=>{
     });
     touch(t);
   } else {
-    const t={id:uid(),name,done:false,assignees:aval?[aval]:[],due:dueVal,updatedAt:Date.now()};
+    const t={id:uid(),name,done:false,assignees:aval?[aval]:[],due:dueVal,updatedAt:Date.now(),notes:[],todos:[],activity:[]};
     board.columns.forEach(col=>{
       if(col.id==='assignee'||col.id==='due'||col.id==='updatedAt')return;
       const el=document.getElementById(`mt-col-${col.id}`);
@@ -2214,6 +2343,7 @@ document.getElementById('mt-confirm').addEventListener('click',()=>{
     });
     if(!t.status)t.status='todo';
     if(!t.priority)t.priority='medium';
+    logActivity(t,'created',{name});
     grp.tasks.push(t);
   }
   save();render();document.getElementById('modal-task').classList.remove('open');toast(tid?'Task updated':'Task added ✓');
@@ -2516,8 +2646,18 @@ document.getElementById('mec-confirm').addEventListener('click', () => {
 });
 
 // Close on overlay click / Escape
-document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
-document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.modal-overlay.open').forEach(o=>o.classList.remove('open'));});
+document.querySelectorAll('.modal-overlay').forEach(o=>{
+  // modal-join must NOT close on backdrop click — it guards access-code entry
+  if(o.id==='modal-join') return;
+  o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');});
+});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape')
+    document.querySelectorAll('.modal-overlay.open').forEach(o=>{
+      // modal-join guards access — must not be dismissible via Escape
+      if(o.id!=='modal-join') o.classList.remove('open');
+    });
+});
 
 // Toolbar buttons
 document.getElementById('btn-add-group-toolbar').addEventListener('click',openGroupModal);
@@ -2715,6 +2855,8 @@ function renderTodos(task) {
 
     // Delete
     row.querySelector('.tp-todo-del').addEventListener('click', () => {
+      const delTodo = task.todos.find(t => t.id === todo.id);
+      logActivity(task, 'todo_deleted', { text: delTodo?.text || '' });
       task.todos = task.todos.filter(t => t.id !== todo.id);
       touch(task); save();
       renderTodos(task);
@@ -2733,6 +2875,7 @@ function completeTodo(task, todoId) {
   todo.doneAt = todo.done ? Date.now() : null;
 
   if (todo.done) {
+    logActivity(task, 'todo_done', { text: todo.text });
     // Auto-inject a system note
     const dateStr = new Date().toLocaleDateString('en-US', {
       weekday: 'short', month: 'short', day: 'numeric', year: 'numeric'
@@ -2749,6 +2892,7 @@ function completeTodo(task, todoId) {
       todoId: todoId,   // link note back to its todo for easy removal
     });
   } else {
+    logActivity(task, 'todo_undone', { text: todo.text });
     // Remove the matching system completion note for this todo
     task.notes = (task.notes || []).filter(n => !(n.system && n.todoId === todoId));
   }
@@ -2767,6 +2911,7 @@ function addTodo() {
   const task = findTask(gid, tid); if (!task) return;
   if (!task.todos) task.todos = [];
   task.todos.push({ id: uid(), text, done: false, createdAt: Date.now(), doneAt: null });
+  logActivity(task, 'todo_added', { text });
   touch(task); save();
   input.value = '';
   renderTodos(task);
@@ -2909,7 +3054,9 @@ document.getElementById('tp-submit-note').addEventListener('click', () => {
   const task = findTask(gid, tid); if (!task) return;
   if (!task.notes) task.notes = [];
   const authorId = document.getElementById('tp-author-select').value || null;
-  task.notes.push({ id: uid(), text, authorId, createdAt: Date.now() });
+  const noteObj = { id: uid(), text, authorId, createdAt: Date.now() };
+  task.notes.push(noteObj);
+  logActivity(task, 'note_added', { text, authorId });
   touch(task); save();
   input.value = '';
   renderNotes(task);
@@ -3667,10 +3814,436 @@ showTaskCtx = function(e, gid, tid) {
 };
 
 // ══════════════════════════════════════════════════════════
+//  REPORTS
+// ══════════════════════════════════════════════════════════
+
+// ── Open report modal ─────────────────────────────────────
+document.getElementById('btn-report').addEventListener('click', openReportModal);
+
+function openReportModal() {
+  // Populate board selector
+  const boardSel = document.getElementById('rpt-board');
+  boardSel.innerHTML = state.boards.map(b =>
+    `<option value="${b.id}" ${b.id === state.activeBoardId ? 'selected' : ''}>${esc(b.name)}</option>`
+  ).join('');
+  populateGroupSelector();
+  setDefaultDates();
+  document.getElementById('rpt-preview').innerHTML =
+    `<div style="color:var(--text3);text-align:center;padding:40px 0">Configure filters above and click Generate Report</div>`;
+  document.getElementById('modal-report').classList.add('open');
+}
+
+function populateGroupSelector() {
+  const bid = document.getElementById('rpt-board').value;
+  const board = state.boards.find(b => b.id === bid);
+  const grpSel = document.getElementById('rpt-group');
+  grpSel.innerHTML = '<option value="all">All groups</option>' +
+    (board?.groups || []).map(g => `<option value="${g.id}">${esc(g.name)}</option>`).join('');
+}
+
+document.getElementById('rpt-board').addEventListener('change', populateGroupSelector);
+
+function setDefaultDates() {
+  const now = new Date();
+  const from = new Date(now); from.setDate(now.getDate() - 7);
+  document.getElementById('rpt-from').value = from.toISOString().slice(0, 10);
+  document.getElementById('rpt-to').value   = now.toISOString().slice(0, 10);
+}
+
+// ── Preset buttons ────────────────────────────────────────
+let _rptPreset = 'week';
+document.querySelectorAll('.rpt-preset').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.rpt-preset').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    _rptPreset = btn.dataset.preset;
+    const customDates = document.getElementById('rpt-custom-dates');
+    customDates.style.display = _rptPreset === 'custom' ? 'flex' : 'none';
+    if (_rptPreset !== 'custom') {
+      const now = new Date();
+      const from = new Date(now);
+      if (_rptPreset === 'week')  from.setDate(now.getDate() - 7);
+      if (_rptPreset === 'month') from.setDate(now.getDate() - 30);
+      if (_rptPreset === 'all')   from.setFullYear(2000);
+      document.getElementById('rpt-from').value = from.toISOString().slice(0, 10);
+      document.getElementById('rpt-to').value   = now.toISOString().slice(0, 10);
+    }
+  });
+});
+
+document.getElementById('rpt-close').addEventListener('click', () =>
+  document.getElementById('modal-report').classList.remove('open'));
+
+// ── Date helpers ──────────────────────────────────────────
+function rptDateRange() {
+  const from = new Date(document.getElementById('rpt-from').value + 'T00:00:00');
+  const to   = new Date(document.getElementById('rpt-to').value   + 'T23:59:59');
+  return { from: from.getTime(), to: to.getTime() };
+}
+
+function fmtTs(ts) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit'
+  });
+}
+function fmtDay(ts) {
+  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// ── Gather report data ────────────────────────────────────
+function gatherReportData() {
+  const { from, to } = rptDateRange();
+  const bid    = document.getElementById('rpt-board').value;
+  const gid    = document.getElementById('rpt-group').value;
+  const board  = state.boards.find(b => b.id === bid);
+  if (!board) return null;
+
+  const incStatus  = document.getElementById('rpt-inc-status').checked;
+  const incFields  = document.getElementById('rpt-inc-fields').checked;
+  const incTodos   = document.getElementById('rpt-inc-todos').checked;
+  const incNotes   = document.getElementById('rpt-inc-notes').checked;
+  const incCreated = document.getElementById('rpt-inc-created').checked;
+
+  const TYPE_OK = {
+    status_change: incStatus,
+    done_toggle:   incStatus,
+    field_change:  incFields,
+    todo_added:    incTodos,
+    todo_done:     incTodos,
+    todo_undone:   incTodos,
+    todo_deleted:  incTodos,
+    note_added:    incNotes,
+    note_deleted:  incNotes,
+    created:       incCreated,
+  };
+
+  const groups = gid === 'all' ? board.groups : board.groups.filter(g => g.id === gid);
+
+  const reportGroups = [];
+  let totalEvents = 0, totalTasks = 0, newTasks = 0, completedTodos = 0, notesAdded = 0;
+
+  groups.forEach(group => {
+    const taskBlocks = [];
+    group.tasks.forEach(task => {
+      const events = (task.activity || []).filter(ev => {
+        if (ev.ts < from || ev.ts > to) return false;
+        return TYPE_OK[ev.type] !== false;
+      });
+
+      // Also include notes added in range (from task.notes directly as backup)
+      const noteEvents = incNotes ? (task.notes || [])
+        .filter(n => !n.system && n.createdAt >= from && n.createdAt <= to &&
+          !events.find(e => e.type === 'note_added' && Math.abs(e.ts - n.createdAt) < 100))
+        .map(n => ({ type: 'note_added', ts: n.createdAt, text: n.text, authorId: n.authorId }))
+        : [];
+
+      const allEvents = [...events, ...noteEvents].sort((a, b) => a.ts - b.ts);
+      if (allEvents.length === 0) return;
+
+      totalEvents += allEvents.length;
+      totalTasks++;
+      newTasks       += allEvents.filter(e => e.type === 'created').length;
+      completedTodos += allEvents.filter(e => e.type === 'todo_done').length;
+      notesAdded     += allEvents.filter(e => e.type === 'note_added').length;
+
+      taskBlocks.push({ task, events: allEvents });
+    });
+
+    if (taskBlocks.length > 0) {
+      reportGroups.push({ group, taskBlocks });
+    }
+  });
+
+  return {
+    board, from, to, reportGroups,
+    stats: { totalEvents, totalTasks, newTasks, completedTodos, notesAdded },
+    dateLabel: `${fmtDay(from)} – ${fmtDay(to)}`,
+  };
+}
+
+// ── Event label helpers ───────────────────────────────────
+function eventIcon(type) {
+  const icons = {
+    created:       '✨', status_change: '🔄', done_toggle: '☑',
+    field_change:  '✏️', todo_added:   '☐',  todo_done:   '✅',
+    todo_undone:   '↩',  todo_deleted: '🗑',  note_added:  '💬',
+    note_deleted:  '🗑',
+  };
+  return icons[type] || '•';
+}
+
+function eventLabel(ev, board) {
+  const authorName = ev.authorId
+    ? (state.members.find(m => m.id === ev.authorId)?.name || 'Someone')
+    : null;
+  const by = authorName ? ` by <strong>${esc(authorName)}</strong>` : '';
+
+  switch (ev.type) {
+    case 'created':
+      return `Task created${by}`;
+    case 'status_change':
+      return `Status changed from <strong>${esc(ev.prev||'—')}</strong> → <strong>${esc(ev.next||'—')}</strong>${by}`;
+    case 'done_toggle':
+      return ev.done
+        ? `Marked <strong>complete</strong>${by}`
+        : `Marked <strong>incomplete</strong>${by}`;
+    case 'field_change': {
+      const fieldName = board.columns.find(c => c.id === ev.field)?.name || ev.field || 'Field';
+      const prev = ev.prev || '—', next = ev.next || '—';
+      if (ev.field === 'name') return `Renamed from "<strong>${esc(prev)}</strong>" to "<strong>${esc(next)}</strong>"${by}`;
+      return `<strong>${esc(fieldName)}</strong> changed from "<em>${esc(prev)}</em>" to "<em>${esc(next)}</em>"${by}`;
+    }
+    case 'todo_added':    return `To-do added: "<em>${esc(ev.text||'')}</em>"`;
+    case 'todo_done':     return `To-do completed: "<em>${esc(ev.text||'')}</em>"`;
+    case 'todo_undone':   return `To-do unchecked: "<em>${esc(ev.text||'')}</em>"`;
+    case 'todo_deleted':  return `To-do removed: "<em>${esc(ev.text||'')}</em>"`;
+    case 'note_added': {
+      const txt = (ev.text||'').slice(0, 120) + ((ev.text||'').length > 120 ? '…' : '');
+      return `Note added${by}: "<em>${esc(txt)}</em>"`;
+    }
+    default: return esc(ev.type);
+  }
+}
+
+// ── Render preview ────────────────────────────────────────
+document.getElementById('rpt-generate').addEventListener('click', () => {
+  const data = gatherReportData();
+  if (!data) { toast('No board selected'); return; }
+
+  const { board, dateLabel, reportGroups, stats } = data;
+
+  let html = `
+    <div class="rpt-header">
+      <h1>📋 ${esc(board.name)} — Activity Report</h1>
+      <div class="rpt-meta">${dateLabel}</div>
+    </div>
+    <div class="rpt-stats">
+      <div class="rpt-stat"><div class="s-num">${stats.totalTasks}</div><div class="s-lbl">Tasks with activity</div></div>
+      <div class="rpt-stat"><div class="s-num">${stats.totalEvents}</div><div class="s-lbl">Total events</div></div>
+      <div class="rpt-stat"><div class="s-num">${stats.newTasks}</div><div class="s-lbl">New tasks</div></div>
+      <div class="rpt-stat"><div class="s-num">${stats.completedTodos}</div><div class="s-lbl">To-dos completed</div></div>
+      <div class="rpt-stat"><div class="s-num">${stats.notesAdded}</div><div class="s-lbl">Notes added</div></div>
+    </div>`;
+
+  if (reportGroups.length === 0) {
+    html += `<div style="color:var(--text3);text-align:center;padding:30px">No activity found in this date range.</div>`;
+  } else {
+    reportGroups.forEach(({ group, taskBlocks }) => {
+      html += `<div class="rpt-group-label" style="border-left:3px solid ${group.color};padding-left:8px">${esc(group.name)}</div>`;
+      taskBlocks.forEach(({ task, events }) => {
+        const statusVal = board.selectValues?.status?.find(v => v.id === task.status);
+        const badgeStyle = statusVal
+          ? `background:${hexAlpha(statusVal.color, 0.15)};color:${statusVal.color}`
+          : 'background:var(--surface3);color:var(--text3)';
+        html += `
+          <div class="rpt-task-block">
+            <div class="rpt-task-title">
+              <span>${task.done ? '✓' : '○'}</span>
+              <span style="flex:1">${esc(task.name)}</span>
+              ${statusVal ? `<span class="rpt-task-badge" style="${badgeStyle}">${esc(statusVal.label)}</span>` : ''}
+              <span style="font-size:0.75em;color:var(--text3);font-weight:400">${events.length} event${events.length===1?'':'s'}</span>
+            </div>
+            <div class="rpt-events">`;
+        events.forEach(ev => {
+          html += `
+              <div class="rpt-event">
+                <div class="rpt-event-icon">${eventIcon(ev.type)}</div>
+                <div class="rpt-event-body">
+                  <div class="rpt-event-text">${eventLabel(ev, board)}</div>
+                  <div class="rpt-event-time">${fmtTs(ev.ts)}</div>
+                </div>
+              </div>`;
+        });
+        html += `</div></div>`;
+      });
+    });
+  }
+
+  document.getElementById('rpt-preview').innerHTML = html;
+  // Store for export
+  document.getElementById('rpt-preview').dataset.reportTitle = `${board.name} — Activity Report`;
+  document.getElementById('rpt-preview').dataset.reportDate  = dateLabel;
+});
+
+// ── PDF export ────────────────────────────────────────────
+document.getElementById('rpt-export-pdf').addEventListener('click', () => {
+  const preview = document.getElementById('rpt-preview');
+  if (!preview.querySelector('.rpt-header')) { toast('Generate a report first'); return; }
+
+  const title   = preview.dataset.reportTitle || 'Ahab Report';
+  const dateStr = preview.dataset.reportDate  || '';
+
+  // Build a print-ready HTML page and open it in a new window
+  const isLight = document.body.classList.contains('light');
+  const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#6c63ff';
+
+  const printHtml = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>${title}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, 'Helvetica Neue', sans-serif; font-size: 12px;
+         color: #1a1a2e; background: #fff; padding: 40px 48px; line-height: 1.6; }
+  h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; color: #0f0f2d; }
+  .meta { font-size: 11px; color: #888; margin-bottom: 20px; }
+  .stats { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+  .stat { background: #f4f4f8; border-radius: 8px; padding: 10px 14px; min-width: 90px; }
+  .s-num { font-size: 20px; font-weight: 700; color: ${accentColor}; line-height: 1; }
+  .s-lbl { font-size: 10px; color: #888; margin-top: 2px; }
+  .group-label { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+                 color: #888; margin: 18px 0 8px; padding-left: 8px; }
+  .task-block { border: 1px solid #e0e0e8; border-radius: 8px; margin-bottom: 14px; overflow: hidden; page-break-inside: avoid; }
+  .task-title { background: #f4f4f8; padding: 8px 12px; font-weight: 600; font-size: 12px;
+                display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e0e0e8; }
+  .task-badge { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+  .task-count { margin-left: auto; font-size: 10px; color: #888; font-weight: 400; }
+  .event { display: flex; gap: 10px; padding: 6px 12px; border-bottom: 1px solid #f0f0f4; align-items: flex-start; }
+  .event:last-child { border-bottom: none; }
+  .event-icon { font-size: 12px; width: 16px; text-align: center; flex-shrink: 0; margin-top: 1px; }
+  .event-text { font-size: 11px; color: #444; line-height: 1.5; }
+  .event-text strong { color: #1a1a2e; }
+  .event-text em { font-style: italic; color: #666; }
+  .event-time { font-size: 10px; color: #aaa; margin-top: 1px; }
+  @media print {
+    body { padding: 20px 28px; }
+    .task-block { page-break-inside: avoid; }
+    @page { margin: 1.5cm; size: A4; }
+  }
+</style>
+</head>
+<body>
+<h1>${title}</h1>
+<div class="meta">Generated ${new Date().toLocaleString()} &nbsp;·&nbsp; ${dateStr}</div>
+${preview.innerHTML
+  .replace(/class="rpt-header[^"]*"/g, '')
+  .replace(/class="rpt-stats"/g, 'class="stats"')
+  .replace(/class="rpt-stat"/g, 'class="stat"')
+  .replace(/class="s-num"/g, 'class="s-num"')
+  .replace(/class="s-lbl"/g, 'class="s-lbl"')
+  .replace(/class="rpt-group-label[^"]*"/g, 'class="group-label"')
+  .replace(/class="rpt-task-block"/g, 'class="task-block"')
+  .replace(/class="rpt-task-title"/g, 'class="task-title"')
+  .replace(/class="rpt-task-badge"/g, 'class="task-badge"')
+  .replace(/class="rpt-events"/g, '')
+  .replace(/class="rpt-event"/g, 'class="event"')
+  .replace(/class="rpt-event-icon"/g, 'class="event-icon"')
+  .replace(/class="rpt-event-body"/g, '')
+  .replace(/class="rpt-event-text"/g, 'class="event-text"')
+  .replace(/class="rpt-event-time"/g, 'class="event-time"')
+  .replace(/class="rpt-header"/g, '')
+  .replace(/<div class="rpt-meta[^"]*">[^<]*<\/div>/g, '')
+  .replace(/<h1>[^<]*<\/h1>/g, '')
+}
+<script>window.onload = () => { window.print(); }<\/script>
+</body>
+</html>`;
+
+  const blob = new Blob([printHtml], { type: 'text/html' });
+  const url  = URL.createObjectURL(blob);
+  const win  = window.open(url, '_blank');
+  if (!win) {
+    // Fallback: download the HTML file directly
+    const a = document.createElement('a');
+    a.href = url; a.download = `${title}.html`; a.click();
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  toast('Print dialog opening — choose "Save as PDF"');
+});
+
+// ── RTF export ────────────────────────────────────────────
+document.getElementById('rpt-export-rtf').addEventListener('click', () => {
+  const data = gatherReportData();
+  if (!data) { toast('Generate a report first'); return; }
+  const preview = document.getElementById('rpt-preview');
+  if (!preview.querySelector('.rpt-header')) { toast('Generate a report first'); return; }
+
+  const { board, dateLabel, reportGroups, stats } = data;
+  const title = `${board.name} — Activity Report`;
+
+  // RTF helpers
+  const rtfEsc = s => String(s||'')
+    .replace(/\\/g,'\\\\')
+    .replace(/\{/g,'\\{')
+    .replace(/\}/g,'\\}')
+    .replace(/[^\x00-\x7F]/g, c => `\\u${c.charCodeAt(0)}?`);
+
+  let rtf = `{\\rtf1\\ansi\\deff0
+{\\fonttbl{\\f0\\fswiss\\fcharset0 Helvetica;}{\\f1\\fswiss\\fcharset0 Helvetica-Bold;}}
+{\\colortbl;\\red108\\green99\\blue255;\\red100\\green100\\blue120;\\red50\\green50\\blue70;}
+\\paperw12240\\paperh15840\\margl1440\\margr1440\\margt1440\\margb1440
+\\f0\\fs22\\cf3
+`;
+
+  // Title
+  rtf += `{\\f1\\fs32\\b ${rtfEsc(title)}\\par}\\par\n`;
+  rtf += `{\\fs18\\cf2 ${rtfEsc(dateLabel)} \\u183? Generated ${rtfEsc(new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}))}\\par}\\par\n`;
+
+  // Stats
+  rtf += `{\\f1\\fs20 Summary\\par}`;
+  rtf += `{\\fs18 Tasks with activity: ${stats.totalTasks}  \\u183?  Total events: ${stats.totalEvents}  \\u183?  New tasks: ${stats.newTasks}  \\u183?  To-dos completed: ${stats.completedTodos}  \\u183?  Notes added: ${stats.notesAdded}\\par}\\par\n`;
+
+  // Groups and tasks
+  if (reportGroups.length === 0) {
+    rtf += `{\\i\\cf2 No activity found in this date range.\\par}\n`;
+  } else {
+    reportGroups.forEach(({ group, taskBlocks }) => {
+      rtf += `\\par{\\f1\\fs20\\cf1 ${rtfEsc(group.name)}\\par}\n`;
+      taskBlocks.forEach(({ task, events }) => {
+        const statusVal = board.selectValues?.status?.find(v => v.id === task.status);
+        const statusLabel = statusVal ? ` [${statusVal.label}]` : '';
+        const doneMarker = task.done ? '✓ ' : '○ ';
+        rtf += `{\\f1\\fs20 ${rtfEsc(doneMarker + task.name)}${rtfEsc(statusLabel)}\\par}\n`;
+        events.forEach(ev => {
+          // Strip HTML tags from eventLabel
+          const labelHtml = eventLabel(ev, board);
+          const labelText = labelHtml.replace(/<[^>]+>/g, '');
+          const icon = eventIcon(ev.type);
+          rtf += `{\\fs18   ${rtfEsc(icon + ' ' + labelText)}\\par}\n`;
+          rtf += `{\\fs16\\cf2     ${rtfEsc(fmtTs(ev.ts))}\\par}\n`;
+        });
+        rtf += `\\par\n`;
+      });
+    });
+  }
+
+  rtf += `}`;
+
+  const blob = new Blob([rtf], { type: 'application/rtf' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${board.name.replace(/[^a-z0-9]/gi,'_')}_report.rtf`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  toast('RTF report downloaded');
+});
+
+// ══════════════════════════════════════════════════════════
 //  FIREBASE SYNC & SHARING  (Option A — always-on sync)
 // ══════════════════════════════════════════════════════════
 
-// ── User identity ─────────────────────────────────────────
+// ── Access code hashing ───────────────────────────────────
+// Codes are stored as SHA-256 hashes so they can't be read
+// from the Firestore doc or browser network tab.
+async function hashCode(plaintext) {
+  if (!plaintext) return '';
+  const buf = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(plaintext.trim().toLowerCase())
+  );
+  return Array.from(new Uint8Array(buf))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function verifyCode(entered, storedHash) {
+  if (!storedHash) return true;  // no code set
+  if (!entered) return false;
+  const h = await hashCode(entered);
+  return h === storedHash;
+}
 // A stable anonymous ID stored in localStorage so we can scope
 // boards to this user and show presence on shared boards.
 const USER_ID_KEY = 'ahab_user_id';
@@ -3877,7 +4450,7 @@ function openShareModal() {
   document.getElementById('share-synced').style.display   = '';
   document.getElementById('share-status').textContent = '';
   document.getElementById('share-link-input').value = makeShareUrl(board.firebaseId);
-  document.getElementById('share-code-input').value = board._accessCode || '';
+  document.getElementById('share-code-input').value = board._hasCode ? '••••••••' : '';
   document.getElementById(board._permission === 'view' ? 'perm-view' : 'perm-edit').checked = true;
   document.getElementById('modal-share').classList.add('open');
 }
@@ -3901,9 +4474,12 @@ document.getElementById('btn-copy-link').addEventListener('click', () => {
 // Save access code + permission
 document.getElementById('btn-save-code').addEventListener('click', async () => {
   const board = ab(); if (!board) return;
-  board._accessCode = document.getElementById('share-code-input').value.trim();
+  const raw = document.getElementById('share-code-input').value.trim();
+  board._accessCode = await hashCode(raw);   // store hash, never plaintext
+  board._hasCode = !!raw;                    // flag so join modal knows to prompt
   board._permission = document.querySelector('input[name="share-perm"]:checked')?.value || 'edit';
   save();
+  document.getElementById('share-code-input').value = raw ? '••••••••' : '';
   document.getElementById('share-status').textContent = '✓ Settings saved';
   setTimeout(() => { const s = document.getElementById('share-status'); if(s) s.textContent = ''; }, 2000);
 });
@@ -3951,7 +4527,7 @@ async function handleShareLink() {
   }
 
   const boardName = remote.name || 'Shared Board';
-  const hasCode = !!remote._accessCode;
+  const hasCode = !!(remote._hasCode || remote._accessCode); // _hasCode for new, _accessCode for legacy plaintext
 
   document.getElementById('join-board-name').textContent = boardName;
   document.getElementById('join-desc').textContent =
@@ -3962,14 +4538,29 @@ async function handleShareLink() {
   document.getElementById('btn-join-cancel').onclick = () => {
     document.getElementById('modal-join').classList.remove('open');
     history.replaceState({}, '', location.pathname);
+    // If a code is required, cancel means "go back" — don't leave them on the board
+    if (hasCode) {
+      // Clear any partially loaded board state
+      const joinedIdx = state.boards.findIndex(b => b.firebaseId === boardId);
+      if (joinedIdx >= 0 && state.boards[joinedIdx]._justJoined) {
+        state.boards.splice(joinedIdx, 1);
+        state.activeBoardId = state.boards[0]?.id;
+        localStorage.setItem(LS_KEY, JSON.stringify(state));
+        render();
+      }
+    }
   };
 
   document.getElementById('btn-join-confirm').onclick = async () => {
     if (hasCode) {
       const entered = document.getElementById('join-code-input').value.trim();
-      if (entered !== remote._accessCode) {
+      const ok = remote._accessCode
+        ? await verifyCode(entered, remote._accessCode)   // hashed
+        : false;
+      if (!ok) {
         document.getElementById('join-code-input').style.borderColor = '#ff6584';
         document.getElementById('join-code-input').placeholder = 'Incorrect code — try again';
+        document.getElementById('join-code-input').value = '';
         return;
       }
     }
