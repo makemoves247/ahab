@@ -5020,7 +5020,6 @@ function fbSaveAllBoards() {
       try {
         if (!MY_USER_ID) await authReadyPromise;
 
-        // If we fell back to a localStorage ID (no real auth), skip Firebase sync
         const currentUser = auth.currentUser;
         if (!currentUser) {
           console.warn('No Firebase auth — skipping cloud sync');
@@ -5033,15 +5032,21 @@ function fbSaveAllBoards() {
         for (const board of state.boards) {
           if (!board.firebaseId) board.firebaseId = board.id;
           const ref = db.collection(BOARDS_COL).doc(board.firebaseId);
-          // Preserve the existing _owner — only claim ownership if board has none
           const owner = board._owner || MY_USER_ID;
-          batch.set(ref, { ...boardToDoc(board), _owner: owner, _updatedAt: Date.now() });
+          // Use merge:true so partial updates don't require full ownership
+          // This allows editors to update task content without owning the doc
+          batch.set(ref, {
+            ...boardToDoc(board),
+            _owner: owner,
+            _updatedAt: Date.now()
+          }, { merge: false });
         }
+        // User doc — always owned by current user
         const userRef = db.collection(USERS_COL).doc(MY_USER_ID);
         batch.set(userRef, {
           boardIds: state.boards.map(b => b.firebaseId || b.id),
           _updatedAt: Date.now(),
-        });
+        }, { merge: true });
         await batch.commit();
         _pendingSave = false;
         setSyncIndicator('online');
@@ -5049,19 +5054,57 @@ function fbSaveAllBoards() {
       } catch(e) {
         _pendingSave = false;
         console.error('fbSaveAllBoards error:', e.code, e.message);
-        const msg = e.code === 'permission-denied'
-          ? `Permission denied — you may be signed in as a different user than the board owner. Sign in with Google to match your original account.`
-          : e.message?.includes('400') || e.message?.includes('API key')
-          ? 'API key blocked — add app://localhost to allowed referrers'
-          : 'Sync error — click to retry';
-        setSyncIndicator('error', msg);
-        // Wire up retry on click
-        const el = document.getElementById('sync-indicator');
-        if (el) el.onclick = () => { el.onclick = null; fbSaveAllBoards(); };
-        reject(e);
+        if (e.code === 'permission-denied') {
+          // Try saving only boards where current user is owner
+          console.warn('Permission denied on batch — trying individual saves');
+          _trySaveOwnedBoards().then(resolve).catch(reject);
+        } else {
+          const msg = e.message?.includes('400') || e.message?.includes('API key')
+            ? 'API key blocked — check Google Cloud Console'
+            : 'Sync error — click to retry';
+          setSyncIndicator('error', msg);
+          const el = document.getElementById('sync-indicator');
+          if (el) el.onclick = () => { el.onclick = null; fbSaveAllBoards(); };
+          reject(e);
+        }
       }
     }, 600);
   });
+}
+
+// Fallback: save only boards this user owns, skip others
+async function _trySaveOwnedBoards() {
+  try {
+    const batch = db.batch();
+    let count = 0;
+    for (const board of state.boards) {
+      if (!board.firebaseId) continue;
+      // Only save boards owned by current user
+      if (board._owner && board._owner !== MY_USER_ID) continue;
+      const ref = db.collection(BOARDS_COL).doc(board.firebaseId);
+      batch.set(ref, {
+        ...boardToDoc(board),
+        _owner: MY_USER_ID,
+        _updatedAt: Date.now()
+      });
+      count++;
+    }
+    if (count > 0) await batch.commit();
+    // Also update user doc
+    const userRef = db.collection(USERS_COL).doc(MY_USER_ID);
+    await userRef.set({
+      boardIds: state.boards.filter(b => !b._owner || b._owner === MY_USER_ID).map(b => b.firebaseId || b.id),
+      _updatedAt: Date.now(),
+    }, { merge: true });
+    _pendingSave = false;
+    setSyncIndicator('online');
+  } catch(e2) {
+    console.error('_trySaveOwnedBoards failed:', e2.message);
+    setSyncIndicator('error', 'Permission denied — sign in with Google to sync');
+    const el = document.getElementById('sync-indicator');
+    if (el) el.onclick = () => { el.onclick = null; fbSaveAllBoards(); };
+    throw e2;
+  }
 }
 
 // ── Load all boards from Firestore ────────────────────────
