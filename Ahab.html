@@ -4905,11 +4905,25 @@ document.getElementById('recover-confirm').addEventListener('click', async () =>
     localStorage.setItem(LS_KEY, JSON.stringify(state));
     state.boards.forEach(b => { if (b.firebaseId) startListeningToBoard(b.firebaseId); });
     render();
-    statusEl.textContent = `✓ Recovered ${added} board${added===1?'':'s'}!`;
+    statusEl.textContent = `✓ Recovered ${added} board${added===1?'':'s'}! Saving to your account…`;
+
+    // Critical: push the recovered boards to the user doc so they persist on refresh
+    try {
+      const userRef = db.collection(USERS_COL).doc(MY_USER_ID);
+      await userRef.set({
+        boardIds: state.boards.map(b => b.firebaseId || b.id),
+        _updatedAt: Date.now(),
+      }, { merge: true });
+      statusEl.textContent = `✓ Recovered ${added} board${added===1?'':'s'} and saved to your account!`;
+    } catch(e) {
+      console.warn('Could not update user doc after recovery:', e.message);
+      statusEl.textContent = `✓ Recovered ${added} board${added===1?'':'s'} (locally). Sign in with Google to keep them on refresh.`;
+    }
+
     setTimeout(() => {
       document.getElementById('modal-recover').classList.remove('open');
       toast(`Recovered ${added} board${added===1?'':'s'} ✓`);
-    }, 1500);
+    }, 2000);
   }
   btn.disabled = false; btn.textContent = 'Recover Boards';
 });
@@ -5636,9 +5650,11 @@ async function initFirebaseSync() {
 
   if (remoteBoards && remoteBoards.length > 0) {
     const remoteIds = new Set(remoteBoards.map(b => b.firebaseId || b.id));
-    const localOnly = state.boards.filter(b => !b.firebaseId && !remoteIds.has(b.id));
+    // Keep boards that are local-only (no firebaseId) OR have a firebaseId
+    // but aren't in the user doc yet (e.g. recovered boards from another user)
+    const localExtra = state.boards.filter(b => !remoteIds.has(b.firebaseId || b.id));
     const merged = migrate({
-      boards: [...remoteBoards, ...localOnly],
+      boards: [...remoteBoards, ...localExtra],
       members: state.members,
       activeBoardId: state.activeBoardId,
     });
@@ -5649,6 +5665,12 @@ async function initFirebaseSync() {
     localStorage.setItem(LS_KEY, JSON.stringify(state));
     render();
     setSyncDot('online');
+
+    // If there are local boards not yet in the user doc, save them up now
+    const hasExtra = localExtra.some(b => b.firebaseId);
+    if (hasExtra) {
+      fbSaveAllBoards().catch(() => {});
+    }
   } else {
     state.boards.forEach(b => { if (!b.firebaseId) b.firebaseId = b.id; });
     localStorage.setItem(LS_KEY, JSON.stringify(state));
