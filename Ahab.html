@@ -208,15 +208,31 @@
     margin-left: -6px; cursor: default;
   }
   .presence-avatar:first-child { margin-left: 0; }
-  .sync-dot {
-    width: 7px; height: 7px; border-radius: 50%;
-    background: #43e97b; margin-right: 2px;
-    animation: pulse-dot 2s ease-in-out infinite;
+  /* ── SYNC INDICATOR ── */
+  #sync-indicator {
+    display: flex; align-items: center; gap: 5px;
+    padding: 3px 9px; border-radius: 20px;
+    font-size: 0.75em; font-weight: 600;
+    border: 1px solid transparent;
+    transition: all 0.25s; cursor: default; white-space: nowrap;
+    user-select: none;
   }
-  .sync-dot.offline { background: var(--text3); animation: none; }
-  .sync-dot.syncing { background: #f7971e; }
-  @keyframes pulse-dot {
-    0%,100%{ opacity:1; } 50%{ opacity:0.5; }
+  #sync-indicator.state-synced  { background: rgba(67,233,123,0.1); border-color: rgba(67,233,123,0.3); color: #43e97b; }
+  #sync-indicator.state-syncing { background: rgba(247,151,30,0.1);  border-color: rgba(247,151,30,0.3);  color: #f7971e; }
+  #sync-indicator.state-offline { background: var(--surface2); border-color: var(--border); color: var(--text3); }
+  #sync-indicator.state-error   { background: rgba(255,101,132,0.1); border-color: rgba(255,101,132,0.3); color: #ff6584; cursor: pointer; }
+  #sync-indicator.state-conflict{ background: rgba(247,151,30,0.15); border-color: rgba(247,151,30,0.5); color: #f7971e; cursor: pointer; }
+  .sync-dot {
+    width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+    background: currentColor;
+  }
+  .sync-dot.spinning {
+    animation: spin-dot 1s linear infinite;
+    border-radius: 0; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  }
+  @keyframes spin-dot {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
   }
   #btn-share { position: relative; }
   .share-badge {
@@ -1015,6 +1031,10 @@
   <span class="titlebar-center">Ahab</span>
   <div class="titlebar-actions">
     <div id="presence-bar"></div>
+    <div id="sync-indicator" class="state-offline" style="display:none" title="Sync status">
+      <div class="sync-dot"></div>
+      <span class="sync-label">Offline</span>
+    </div>
     <button class="tb-btn secondary" id="btn-report" title="Generate report">📋 Report</button>
     <button class="tb-btn secondary" id="btn-share" title="Share board">⬆ Share</button>
     <button class="tb-btn secondary" id="btn-add-group-toolbar">＋ Group</button>
@@ -4718,7 +4738,7 @@ async function hashCode(plaintext) {
 }
 
 async function verifyCode(entered, storedHash) {
-  if (!storedHash) return true;  // no code set
+  if (!storedHash) return false;  // hash missing — reject rather than allow through
   if (!entered) return false;
   const h = await hashCode(entered);
   return h === storedHash;
@@ -4766,33 +4786,83 @@ function boardToDoc(board) {
   return JSON.parse(JSON.stringify(board));
 }
 
-// ── Save all boards to Firestore ──────────────────────────
+// ── Task-level merge: newer updatedAt wins, never lose tasks ──
+function mergeBoards(local, remote) {
+  // Start with remote as the base (has canonical structure/settings)
+  const merged = JSON.parse(JSON.stringify(remote));
+
+  // Build lookup maps
+  const localTaskMap  = {};
+  const remoteTaskMap = {};
+  (local.groups  || []).forEach(g => g.tasks.forEach(t => { localTaskMap[t.id]  = { task: t, gid: g.id }; }));
+  (remote.groups || []).forEach(g => g.tasks.forEach(t => { remoteTaskMap[t.id] = { task: t, gid: g.id }; }));
+
+  // For each task in merged (remote), pick the newer version
+  merged.groups.forEach(g => {
+    g.tasks = g.tasks.map(remoteTask => {
+      const localEntry = localTaskMap[remoteTask.id];
+      if (!localEntry) return remoteTask; // remote-only task — keep it
+      const localTask = localEntry.task;
+      // Newer updatedAt wins
+      return (localTask.updatedAt || 0) > (remoteTask.updatedAt || 0) ? localTask : remoteTask;
+    });
+  });
+
+  // Add any tasks that exist locally but not in remote (created offline)
+  Object.entries(localTaskMap).forEach(([tid, { task, gid }]) => {
+    if (remoteTaskMap[tid]) return; // already handled
+    // Find matching group by id, fall back to first group
+    const targetGroup = merged.groups.find(g => g.id === gid) || merged.groups[0];
+    if (targetGroup) {
+      targetGroup.tasks.push(task);
+      console.log('[merge] Restored local-only task:', task.name);
+    }
+  });
+
+  // Preserve access code fields from remote (authoritative)
+  merged._accessCode = remote._accessCode !== undefined ? remote._accessCode : local._accessCode;
+  merged._hasCode    = remote._hasCode    !== undefined ? remote._hasCode    : local._hasCode;
+  merged._permission = remote._permission || local._permission;
+  merged._editors    = remote._editors    || local._editors || [];
+  merged._invites    = remote._invites    || local._invites || [];
+  merged._owner      = remote._owner      || local._owner;
+  merged.firebaseId  = remote.firebaseId  || local.firebaseId;
+
+  return merged;
+}
+
+// ── Save all boards to Firestore (debounced 600ms) ────────
 let _saveTimer = null;
+let _pendingSave = false;
 function fbSaveAllBoards() {
   clearTimeout(_saveTimer);
+  _pendingSave = true;
+  setSyncIndicator('syncing');
   return new Promise((resolve, reject) => {
     _saveTimer = setTimeout(async () => {
       try {
-        // Ensure auth has resolved before using MY_USER_ID
         if (!MY_USER_ID) await authReadyPromise;
-        setSyncDot('syncing');
         const batch = db.batch();
         for (const board of state.boards) {
           if (!board.firebaseId) board.firebaseId = board.id;
           const ref = db.collection(BOARDS_COL).doc(board.firebaseId);
           batch.set(ref, { ...boardToDoc(board), _owner: MY_USER_ID, _updatedAt: Date.now() });
         }
-        // Store the list of board IDs on the user doc
         const userRef = db.collection(USERS_COL).doc(MY_USER_ID);
         batch.set(userRef, {
           boardIds: state.boards.map(b => b.firebaseId || b.id),
           _updatedAt: Date.now(),
         });
         await batch.commit();
-        setSyncDot('online');
+        _pendingSave = false;
+        setSyncIndicator('online');
         resolve();
       } catch(e) {
-        setSyncDot('offline');
+        _pendingSave = false;
+        setSyncIndicator('error');
+        // Wire up retry on click
+        const el = document.getElementById('sync-indicator');
+        if (el) el.onclick = () => { el.onclick = null; fbSaveAllBoards(); };
         reject(e);
       }
     }, 600);
@@ -4833,34 +4903,48 @@ async function fbLoadAllBoards() {
 let _listeners = {}; // boardId → unsubscribe fn
 
 function startListeningToBoard(firebaseId) {
-  if (_listeners[firebaseId]) return; // already listening
+  if (_listeners[firebaseId]) return;
   _listeners[firebaseId] = db.collection(BOARDS_COL).doc(firebaseId)
     .onSnapshot(snap => {
       if (!snap.exists) return;
       const remote = snap.data();
-      // Skip if this update was triggered by our own save
-      if (remote._updatedAt && remote._owner === MY_USER_ID) {
-        const board = state.boards.find(b => b.firebaseId === firebaseId);
-        if (board && Math.abs((board._lastSavedAt||0) - remote._updatedAt) < 2000) return;
-      }
+
+      // Skip echoes of our own saves (within 3 seconds)
+      if (remote._updatedAt && remote._owner === MY_USER_ID &&
+          Date.now() - remote._updatedAt < 3000) return;
+
       const idx = state.boards.findIndex(b => b.firebaseId === firebaseId);
+
       if (idx >= 0) {
-        const preserved = { firebaseId, _permission: state.boards[idx]._permission, _accessCode: state.boards[idx]._accessCode };
-        const merged = migrate({ boards: [remote], members: state.members, activeBoardId: remote.id });
-        state.boards[idx] = { ...merged.boards[0], ...preserved };
+        const local = state.boards[idx];
+
+        // Skip if remote is older than what we have
+        if (remote._updatedAt && local._updatedAt && remote._updatedAt < local._updatedAt) return;
+
+        const merged = mergeBoards(local, remote);
+        const hadConflict = JSON.stringify(local.groups) !== JSON.stringify(merged.groups);
+
+        state.boards[idx] = merged;
         localStorage.setItem(LS_KEY, JSON.stringify(state));
         render();
-        setSyncDot('online');
+
+        if (hadConflict) {
+          setSyncIndicator('conflict');
+          setTimeout(() => setSyncIndicator('online'), 4000);
+        } else {
+          setSyncIndicator('online');
+        }
       } else {
-        // Board we don't have locally — add it (shared board update)
-        const merged = migrate({ boards: [remote], members: state.members, activeBoardId: remote.id });
-        state.boards.push({ ...merged.boards[0], firebaseId });
+        // New board arriving (e.g. shared with us)
+        const mergedNew = migrate({ boards: [remote], members: state.members, activeBoardId: remote.id });
+        state.boards.push({ ...mergedNew.boards[0], firebaseId });
         localStorage.setItem(LS_KEY, JSON.stringify(state));
         render();
+        setSyncIndicator('online');
       }
     }, err => {
       console.warn('Firestore listen error:', err);
-      setSyncDot('offline');
+      setSyncIndicator('error', 'Connection lost');
     });
 }
 
@@ -4905,9 +4989,7 @@ function stopPresence() {
 function renderPresence(viewers) {
   const bar = document.getElementById('presence-bar');
   if (!bar) return;
-  const dot = document.getElementById('sync-dot');
   bar.innerHTML = '';
-  if (dot) bar.appendChild(dot);
   viewers.slice(0, 5).forEach(v => {
     const el = document.createElement('div');
     el.className = 'presence-avatar';
@@ -4926,13 +5008,56 @@ function renderPresence(viewers) {
 }
 
 // ── Sync dot ──────────────────────────────────────────────
-function setSyncDot(s) {
-  const dot = document.getElementById('sync-dot');
-  if (!dot) return;
-  dot.className = 'sync-dot' + (s === 'offline' ? ' offline' : s === 'syncing' ? ' syncing' : '');
-  dot.title = s === 'online' ? 'Synced' : s === 'syncing' ? 'Syncing…' : 'Offline';
-  dot.style.display = '';
+function setSyncDot(s) { setSyncIndicator(s); } // legacy alias
+
+let _lastSyncedAt = null;
+function setSyncIndicator(state_, detail) {
+  const el = document.getElementById('sync-indicator');
+  if (!el) return;
+  const dot = el.querySelector('.sync-dot');
+
+  const states = {
+    syncing:  { cls: 'state-syncing', dot: 'spinning', label: 'Syncing…' },
+    online:   { cls: 'state-synced',  dot: '',         label: 'Synced'   },
+    offline:  { cls: 'state-offline', dot: '',         label: 'Offline'  },
+    error:    { cls: 'state-error',   dot: '',         label: detail || 'Sync error — click to retry' },
+    conflict: { cls: 'state-conflict',dot: '',         label: 'Merged changes' },
+  };
+  const cfg = states[state_] || states.offline;
+
+  el.className = 'state- ' + cfg.cls; // reset then set
+  el.className = cfg.cls;
+  if (dot) dot.className = 'sync-dot' + (cfg.dot ? ' ' + cfg.dot : '');
+  el.querySelector('.sync-label').textContent = cfg.label;
+
+  if (state_ === 'online') {
+    _lastSyncedAt = Date.now();
+    // Show "Synced" briefly then fade to just a dot
+    clearTimeout(el._fadeTimer);
+    el._fadeTimer = setTimeout(() => {
+      const lbl = el.querySelector('.sync-label');
+      if (lbl) lbl.textContent = fmtSyncTime(_lastSyncedAt);
+    }, 2500);
+  }
 }
+
+function fmtSyncTime(ts) {
+  if (!ts) return '';
+  const secs = Math.floor((Date.now() - ts) / 1000);
+  if (secs < 10)  return 'Just synced';
+  if (secs < 60)  return `${secs}s ago`;
+  if (secs < 3600) return `${Math.floor(secs/60)}m ago`;
+  return 'Synced';
+}
+
+// Refresh "X ago" label every 30s
+setInterval(() => {
+  const el = document.getElementById('sync-indicator');
+  if (!el || !_lastSyncedAt) return;
+  if (el.classList.contains('state-synced')) {
+    el.querySelector('.sync-label').textContent = fmtSyncTime(_lastSyncedAt);
+  }
+}, 30000);
 
 // ── Share link ────────────────────────────────────────────
 function makeShareUrl(firebaseId) {
@@ -5139,9 +5264,19 @@ async function handleShareLink() {
   document.getElementById('btn-join-confirm').onclick = async () => {
     if (hasCode) {
       const entered = document.getElementById('join-code-input').value.trim();
-      const ok = remote._accessCode
-        ? await verifyCode(entered, remote._accessCode)   // hashed
-        : false;
+      if (!entered) {
+        document.getElementById('join-code-input').style.borderColor = '#ff6584';
+        document.getElementById('join-code-input').placeholder = 'Enter the access code';
+        return;
+      }
+      if (!remote._accessCode) {
+        // _hasCode set but hash missing — likely a sync delay, ask user to retry
+        document.getElementById('join-code-input').style.borderColor = '#f7971e';
+        document.getElementById('join-code-input').placeholder = 'Code not synced yet — try again in a moment';
+        document.getElementById('join-code-input').value = '';
+        return;
+      }
+      const ok = await verifyCode(entered, remote._accessCode);
       if (!ok) {
         document.getElementById('join-code-input').style.borderColor = '#ff6584';
         document.getElementById('join-code-input').placeholder = 'Incorrect code — try again';
@@ -5199,12 +5334,10 @@ async function handleShareLink() {
 
 // ── Bootstrap: load from Firebase then start listeners ───
 async function initFirebaseSync() {
-  // Add sync dot
-  const syncDot = document.createElement('div');
-  syncDot.id = 'sync-dot';
-  syncDot.className = 'sync-dot syncing';
-  syncDot.title = 'Connecting…';
-  document.getElementById('presence-bar').prepend(syncDot);
+  // Show the sync indicator
+  const indicator = document.getElementById('sync-indicator');
+  if (indicator) indicator.style.display = '';
+  setSyncIndicator('syncing');
 
   addShareBadge();
 
