@@ -1405,14 +1405,14 @@
   <div class="modal" style="width:460px">
     <h2>🔄 Recover Data from Firebase</h2>
     <p style="font-size:0.88em;color:var(--text2);line-height:1.6;margin-bottom:16px">
-      If you signed in before and your boards were saved to Firebase, enter your
-      Firebase User ID below to pull them back. You can find your old User ID in
-      the Firebase Console under <strong>Authentication → Users</strong>.
+      Enter a <strong>Board ID</strong> (from Firestore → boards collection) or a
+      <strong>User ID</strong> (from Firebase Console → Authentication → Users)
+      to pull boards back into the app.
     </p>
     <div style="margin-bottom:12px">
-      <label class="modal-label">Firebase User ID</label>
+      <label class="modal-label">Board ID or User ID</label>
       <input class="modal-input" id="recover-uid-input"
-             placeholder="e.g. abc123XYZdef456…" style="margin-top:6px;font-family:monospace;font-size:0.85em" />
+             placeholder="e.g. C2wJQfvze1dlRpIWgpF4" style="margin-top:6px;font-family:monospace;font-size:0.85em" />
       <p style="font-size:0.76em;color:var(--text3);margin-top:5px">
         This is the UID shown in Firebase Console → Authentication → Users table.
         It looks like a long string of letters and numbers.
@@ -4842,56 +4842,74 @@ document.getElementById('recover-close').addEventListener('click', () =>
   document.getElementById('modal-recover').classList.remove('open'));
 
 document.getElementById('recover-confirm').addEventListener('click', async () => {
-  const uidInput = document.getElementById('recover-uid-input').value.trim();
+  const input    = document.getElementById('recover-uid-input').value.trim();
   const statusEl = document.getElementById('recover-status');
-  const btn = document.getElementById('recover-confirm');
-  if (!uidInput) { statusEl.textContent = '⚠ Enter a User ID'; return; }
+  const btn      = document.getElementById('recover-confirm');
+  if (!input) { statusEl.textContent = '⚠ Enter a Board ID or User ID'; return; }
+
   btn.disabled = true; btn.textContent = 'Recovering…';
-  statusEl.textContent = 'Looking up boards in Firebase…';
-  try {
-    const userSnap = await db.collection(USERS_COL).doc(uidInput).get();
-    if (!userSnap.exists) {
-      statusEl.textContent = '✗ No data found for that User ID.';
-      btn.disabled = false; btn.textContent = 'Recover Boards'; return;
-    }
-    const { boardIds = [] } = userSnap.data();
-    if (!boardIds.length) {
-      statusEl.textContent = '✗ No boards found for that User ID.';
-      btn.disabled = false; btn.textContent = 'Recover Boards'; return;
-    }
-    statusEl.textContent = `Found ${boardIds.length} board(s). Loading…`;
-    const boardSnaps = await Promise.all(boardIds.map(id => db.collection(BOARDS_COL).doc(id).get()));
-    const boards = boardSnaps.filter(s => s.exists).map(s => s.data());
-    if (!boards.length) {
-      statusEl.textContent = '✗ Board documents not found.';
-      btn.disabled = false; btn.textContent = 'Recover Boards'; return;
-    }
-    const existingIds = new Set(state.boards.map(b => b.firebaseId || b.id));
-    let added = 0;
-    boards.forEach(remote => {
-      const fbId = remote.firebaseId || remote.id;
-      if (!existingIds.has(fbId)) {
-        const m = migrate({ boards: [remote], members: state.members, activeBoardId: remote.id });
-        state.boards.push({ ...m.boards[0], firebaseId: fbId });
-        added++;
+
+  // Split on commas/spaces so user can paste multiple board IDs
+  const tokens = input.split(/[\s,]+/).filter(Boolean);
+  let boardsToLoad = [];
+
+  for (const token of tokens) {
+    statusEl.textContent = `Fetching ${token.slice(0,12)}…`;
+
+    // Try as a direct board ID (only needs request.auth != null)
+    const boardResult = await db.collection(BOARDS_COL).doc(token).get().catch(e => ({ _err: e }));
+    if (boardResult._err) {
+      if (boardResult._err.code === 'permission-denied') {
+        statusEl.textContent = '✗ Permission denied — make sure you are signed in (not as a guest). If the problem persists, update your Firestore Security Rules.';
+        btn.disabled = false; btn.textContent = 'Recover Boards'; return;
       }
-    });
-    if (added === 0) {
-      statusEl.textContent = '✓ Boards already present — nothing new to recover.';
-    } else {
-      state.activeBoardId = state.boards[0]?.id;
-      localStorage.setItem(LS_KEY, JSON.stringify(state));
-      state.boards.forEach(b => { if (b.firebaseId) startListeningToBoard(b.firebaseId); });
-      render();
-      statusEl.textContent = `✓ Recovered ${added} board(s)!`;
-      setTimeout(() => {
-        document.getElementById('modal-recover').classList.remove('open');
-        toast(`Recovered ${added} board${added===1?'':'s'} ✓`);
-      }, 1500);
+    } else if (boardResult.exists) {
+      boardsToLoad.push(boardResult.data());
+      continue;
     }
-  } catch(e) {
-    statusEl.textContent = '✗ Error: ' + e.message;
-    console.error('Recovery error:', e);
+
+    // Try as a user UID → fetch their board list
+    const userResult = await db.collection(USERS_COL).doc(token).get().catch(() => null);
+    if (userResult?.exists) {
+      const { boardIds = [] } = userResult.data();
+      statusEl.textContent = `Found ${boardIds.length} board(s) for that User ID. Loading…`;
+      const snaps = await Promise.all(
+        boardIds.map(id => db.collection(BOARDS_COL).doc(id).get().catch(() => null))
+      );
+      boardsToLoad.push(...snaps.filter(s => s?.exists).map(s => s.data()));
+    }
+  }
+
+  if (!boardsToLoad.length) {
+    statusEl.innerHTML = '✗ Nothing found. Tips:<br>• Make sure you are signed in with Google (not anonymous)<br>• Paste Board IDs from Firestore → boards collection<br>• Board IDs look like: <code>C2wJQfvze1dlRpIWgpF4</code>';
+    btn.disabled = false; btn.textContent = 'Recover Boards'; return;
+  }
+
+  const existingIds = new Set(state.boards.map(b => b.firebaseId || b.id));
+  let added = 0;
+  boardsToLoad.forEach(remote => {
+    if (!remote) return;
+    const fbId = remote.firebaseId || remote.id;
+    if (!existingIds.has(fbId)) {
+      const m = migrate({ boards: [remote], members: state.members, activeBoardId: remote.id });
+      state.boards.push({ ...m.boards[0], firebaseId: fbId });
+      existingIds.add(fbId);
+      added++;
+    }
+  });
+
+  if (added === 0) {
+    statusEl.textContent = '✓ Already present — nothing new to recover.';
+  } else {
+    state.activeBoardId = state.boards[0]?.id;
+    localStorage.setItem(LS_KEY, JSON.stringify(state));
+    state.boards.forEach(b => { if (b.firebaseId) startListeningToBoard(b.firebaseId); });
+    render();
+    statusEl.textContent = `✓ Recovered ${added} board${added===1?'':'s'}!`;
+    setTimeout(() => {
+      document.getElementById('modal-recover').classList.remove('open');
+      toast(`Recovered ${added} board${added===1?'':'s'} ✓`);
+    }, 1500);
   }
   btn.disabled = false; btn.textContent = 'Recover Boards';
 });
