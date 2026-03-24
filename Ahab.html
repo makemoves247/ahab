@@ -5043,16 +5043,17 @@ function fbSaveAllBoards() {
         }
 
         const batch = db.batch();
+        const now = Date.now();
         for (const board of state.boards) {
           if (!board.firebaseId) board.firebaseId = board.id;
           const ref = db.collection(BOARDS_COL).doc(board.firebaseId);
           const owner = board._owner || MY_USER_ID;
-          // Use merge:true so partial updates don't require full ownership
-          // This allows editors to update task content without owning the doc
+          // Record save time so listener can identify our own echo and suppress it
+          _ourSaveTimes[board.firebaseId] = now;
           batch.set(ref, {
             ...boardToDoc(board),
             _owner: owner,
-            _updatedAt: Date.now()
+            _updatedAt: now
           }, { merge: false });
         }
         // User doc — always owned by current user
@@ -5155,6 +5156,10 @@ async function fbLoadAllBoards() {
 // ── Real-time listener for a shared board ─────────────────
 let _listeners = {}; // boardId → unsubscribe fn
 
+// Track our own save timestamps so we can suppress echoes without
+// accidentally dropping updates from other users on the same board
+const _ourSaveTimes = {}; // firebaseId → timestamp of last save we initiated
+
 function startListeningToBoard(firebaseId) {
   if (_listeners[firebaseId]) return;
   _listeners[firebaseId] = db.collection(BOARDS_COL).doc(firebaseId)
@@ -5162,16 +5167,17 @@ function startListeningToBoard(firebaseId) {
       if (!snap.exists) return;
       const remote = snap.data();
 
-      // Skip echoes of our own saves (within 3 seconds)
-      if (remote._updatedAt && remote._owner === MY_USER_ID &&
-          Date.now() - remote._updatedAt < 3000) return;
+      // Only suppress if _updatedAt exactly matches our last save time for this board
+      // (not just any update on a board we own — that would hide collaborator changes)
+      const ourLastSave = _ourSaveTimes[firebaseId] || 0;
+      if (remote._updatedAt && Math.abs(remote._updatedAt - ourLastSave) < 1500) return;
 
       const idx = state.boards.findIndex(b => b.firebaseId === firebaseId);
 
       if (idx >= 0) {
         const local = state.boards[idx];
 
-        // Skip if remote is older than what we have
+        // Skip if remote is older than what we have locally
         if (remote._updatedAt && local._updatedAt && remote._updatedAt < local._updatedAt) return;
 
         const merged = mergeBoards(local, remote);
