@@ -4859,7 +4859,13 @@ function fbSaveAllBoards() {
         resolve();
       } catch(e) {
         _pendingSave = false;
-        setSyncIndicator('error');
+        console.error('fbSaveAllBoards error:', e.code, e.message);
+        const msg = e.code === 'permission-denied'
+          ? 'Permissions error — check Firebase rules'
+          : e.message?.includes('400') || e.message?.includes('API key')
+          ? 'API key blocked — add app://localhost to allowed referrers'
+          : 'Sync error — click to retry';
+        setSyncIndicator('error', msg);
         // Wire up retry on click
         const el = document.getElementById('sync-indicator');
         if (el) el.onclick = () => { el.onclick = null; fbSaveAllBoards(); };
