@@ -1158,6 +1158,7 @@
     </div>
     <button class="sp-btn" id="sp-export" style="margin-bottom:6px">📤 Export all boards as JSON</button>
     <button class="sp-btn" id="sp-import">📥 Import from JSON</button>
+    <button class="sp-btn" id="sp-recover" style="margin-bottom:6px">🔄 Recover data from Firebase…</button>
     <button class="sp-btn danger" id="sp-clear">🗑 Clear all data…</button>
     <input type="file" id="sp-import-file" accept=".json" style="display:none" />
   </div>
@@ -1395,6 +1396,32 @@
       <button class="modal-btn cancel" id="rpt-export-rtf">Export RTF</button>
       <button class="modal-btn cancel" id="rpt-export-pdf">Export PDF</button>
       <button class="modal-btn confirm" id="rpt-generate">Generate Report</button>
+    </div>
+  </div>
+</div>
+
+<!-- Data recovery modal -->
+<div class="modal-overlay" id="modal-recover">
+  <div class="modal" style="width:460px">
+    <h2>🔄 Recover Data from Firebase</h2>
+    <p style="font-size:0.88em;color:var(--text2);line-height:1.6;margin-bottom:16px">
+      If you signed in before and your boards were saved to Firebase, enter your
+      Firebase User ID below to pull them back. You can find your old User ID in
+      the Firebase Console under <strong>Authentication → Users</strong>.
+    </p>
+    <div style="margin-bottom:12px">
+      <label class="modal-label">Firebase User ID</label>
+      <input class="modal-input" id="recover-uid-input"
+             placeholder="e.g. abc123XYZdef456…" style="margin-top:6px;font-family:monospace;font-size:0.85em" />
+      <p style="font-size:0.76em;color:var(--text3);margin-top:5px">
+        This is the UID shown in Firebase Console → Authentication → Users table.
+        It looks like a long string of letters and numbers.
+      </p>
+    </div>
+    <div id="recover-status" style="font-size:0.86em;color:var(--text2);min-height:18px;margin-bottom:12px"></div>
+    <div class="modal-actions">
+      <button class="modal-btn cancel" id="recover-close">Cancel</button>
+      <button class="modal-btn confirm" id="recover-confirm">Recover Boards</button>
     </div>
   </div>
 </div>
@@ -3848,6 +3875,15 @@ function buildSettingsUI() {
     saveSettings(); applySettings();
   });
 
+  // Recover data
+  document.getElementById('sp-recover')?.addEventListener('click', () => {
+    document.getElementById('recover-uid-input').value = '';
+    document.getElementById('recover-status').textContent = '';
+    document.getElementById('modal-recover').classList.add('open');
+    document.getElementById('settings-panel').classList.remove('open');
+    document.getElementById('settings-btn').classList.remove('active');
+  });
+
   // Export JSON
   document.getElementById('sp-export')?.addEventListener('click', () => {
     nativeDownload('ahab-export.json', JSON.stringify(state, null, 2), 'application/json');
@@ -3891,26 +3927,42 @@ function buildSettingsUI() {
 
   // Import
   document.getElementById('sp-import')?.addEventListener('click', () => {
-    document.getElementById('sp-import-file').click();
+    if (window.webkit?.messageHandlers?.nativeBridge) {
+      // WKWebView: use native file picker via Swift bridge
+      window.webkit.messageHandlers.nativeBridge.postMessage({ action: 'openFile', accept: 'json' });
+    } else {
+      document.getElementById('sp-import-file').click();
+    }
   });
   document.getElementById('sp-import-file')?.addEventListener('change', e => {
     const file = e.target.files[0]; if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      try {
-        const imported = JSON.parse(ev.target.result);
-        if (!imported.boards) throw new Error('Invalid format');
-        state = migrate(imported);
-        if (!state.activeBoardId || !state.boards.find(b => b.id === state.activeBoardId))
-          state.activeBoardId = state.boards[0]?.id;
-        save(); render(); toast('Data imported ✓');
-      } catch(err) {
-        toast('Import failed — invalid file');
-      }
-    };
-    reader.readAsText(file);
+    handleImportFile(file);
     e.target.value = '';
   });
+
+  // Shared import handler — called by both file input and Swift bridge
+  window.__ahabImportJSON = (text, err) => {
+    if (!text || err) { toast('Import failed — ' + (err || 'could not read file')); return; }
+    try {
+      const imported = JSON.parse(text);
+      if (!imported.boards) throw new Error('Invalid format — no boards found');
+      state = migrate(imported);
+      if (!state.activeBoardId || !state.boards.find(b => b.id === state.activeBoardId))
+        state.activeBoardId = state.boards[0]?.id;
+      save(); render();
+      document.getElementById('settings-panel')?.classList.remove('open');
+      document.getElementById('settings-btn')?.classList.remove('active');
+      toast(`Imported ${state.boards.length} board${state.boards.length===1?'':'s'} ✓`);
+    } catch(err) {
+      toast('Import failed — ' + err.message);
+    }
+  };
+
+  function handleImportFile(file) {
+    const reader = new FileReader();
+    reader.onload = ev => window.__ahabImportJSON(ev.target.result);
+    reader.readAsText(file);
+  }
 
   // Clear data
   document.getElementById('sp-clear')?.addEventListener('click', () => {
@@ -4785,6 +4837,65 @@ async function verifyCode(entered, storedHash) {
 // ── User identity via Firebase Auth ──────────────────────
 // MY_USER_ID is the Firebase Auth UID — same across all browsers/devices
 // once the user is signed in. Persists automatically via IndexedDB.
+// ── Data recovery modal ───────────────────────────────────
+document.getElementById('recover-close').addEventListener('click', () =>
+  document.getElementById('modal-recover').classList.remove('open'));
+
+document.getElementById('recover-confirm').addEventListener('click', async () => {
+  const uidInput = document.getElementById('recover-uid-input').value.trim();
+  const statusEl = document.getElementById('recover-status');
+  const btn = document.getElementById('recover-confirm');
+  if (!uidInput) { statusEl.textContent = '⚠ Enter a User ID'; return; }
+  btn.disabled = true; btn.textContent = 'Recovering…';
+  statusEl.textContent = 'Looking up boards in Firebase…';
+  try {
+    const userSnap = await db.collection(USERS_COL).doc(uidInput).get();
+    if (!userSnap.exists) {
+      statusEl.textContent = '✗ No data found for that User ID.';
+      btn.disabled = false; btn.textContent = 'Recover Boards'; return;
+    }
+    const { boardIds = [] } = userSnap.data();
+    if (!boardIds.length) {
+      statusEl.textContent = '✗ No boards found for that User ID.';
+      btn.disabled = false; btn.textContent = 'Recover Boards'; return;
+    }
+    statusEl.textContent = `Found ${boardIds.length} board(s). Loading…`;
+    const boardSnaps = await Promise.all(boardIds.map(id => db.collection(BOARDS_COL).doc(id).get()));
+    const boards = boardSnaps.filter(s => s.exists).map(s => s.data());
+    if (!boards.length) {
+      statusEl.textContent = '✗ Board documents not found.';
+      btn.disabled = false; btn.textContent = 'Recover Boards'; return;
+    }
+    const existingIds = new Set(state.boards.map(b => b.firebaseId || b.id));
+    let added = 0;
+    boards.forEach(remote => {
+      const fbId = remote.firebaseId || remote.id;
+      if (!existingIds.has(fbId)) {
+        const m = migrate({ boards: [remote], members: state.members, activeBoardId: remote.id });
+        state.boards.push({ ...m.boards[0], firebaseId: fbId });
+        added++;
+      }
+    });
+    if (added === 0) {
+      statusEl.textContent = '✓ Boards already present — nothing new to recover.';
+    } else {
+      state.activeBoardId = state.boards[0]?.id;
+      localStorage.setItem(LS_KEY, JSON.stringify(state));
+      state.boards.forEach(b => { if (b.firebaseId) startListeningToBoard(b.firebaseId); });
+      render();
+      statusEl.textContent = `✓ Recovered ${added} board(s)!`;
+      setTimeout(() => {
+        document.getElementById('modal-recover').classList.remove('open');
+        toast(`Recovered ${added} board${added===1?'':'s'} ✓`);
+      }, 1500);
+    }
+  } catch(e) {
+    statusEl.textContent = '✗ Error: ' + e.message;
+    console.error('Recovery error:', e);
+  }
+  btn.disabled = false; btn.textContent = 'Recover Boards';
+});
+
 let MY_USER_ID = null;
 let _authResolve;
 const authReadyPromise = new Promise(res => { _authResolve = res; });
