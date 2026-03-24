@@ -1383,22 +1383,9 @@
 <div class="modal-overlay" id="modal-signin" style="z-index:1100">
   <div class="modal" style="width:360px">
     <!-- Stylized wordmark -->
-    <div style="margin-bottom:24px;display:flex;flex-direction:column;align-items:center;gap:8px">
-      <svg width="60" height="60" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <!-- Anchor ring -->
-        <circle cx="30" cy="14" r="7" stroke="#6c63ff" stroke-width="3.5" fill="none"/>
-        <!-- Anchor shaft -->
-        <line x1="30" y1="21" x2="30" y2="48" stroke="#8b5cf6" stroke-width="3.5" stroke-linecap="round"/>
-        <!-- Anchor crossbar -->
-        <line x1="16" y1="30" x2="44" y2="30" stroke="#a855f7" stroke-width="3.5" stroke-linecap="round"/>
-        <!-- Anchor flukes -->
-        <path d="M30 48 C30 48 14 43 12 35" stroke="#d946a8" stroke-width="3.5" stroke-linecap="round" fill="none"/>
-        <path d="M30 48 C30 48 46 43 48 35" stroke="#ff6584" stroke-width="3.5" stroke-linecap="round" fill="none"/>
-        <!-- Fluke tips -->
-        <circle cx="12" cy="35" r="3" fill="#d946a8"/>
-        <circle cx="48" cy="35" r="3" fill="#ff6584"/>
-      </svg>
-      <div style="font-size:2.2em;font-weight:800;letter-spacing:-1.5px;background:linear-gradient(135deg,#6c63ff,#ff6584);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif">Ahab</div>
+    <div style="margin-bottom:24px;display:flex;flex-direction:column;align-items:center;gap:4px">
+      <div style="font-size:3em;line-height:1;margin-bottom:4px">⚓</div>
+      <div style="font-size:2.6em;font-weight:800;letter-spacing:-2px;line-height:1;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-family:var(--font-display)">Ahab</div>
     </div>
     <div class="signin-sub">Sign in to sync your boards across all your devices and share with collaborators.</div>
     <button class="btn-google" id="btn-google-signin">
@@ -5005,22 +4992,23 @@ async function handleShareLink() {
 
   let snap;
   try { snap = await db.collection(BOARDS_COL).doc(boardId).get(); }
-  catch(e) { toast('Could not reach server'); return; }
+  catch(e) { toast('Could not reach server — check your connection'); return; }
   if (!snap.exists) { toast('Shared board not found'); return; }
 
   const remote = snap.data();
 
-  // Check if current user is already an authorized editor
-  const currentUser = auth.currentUser;
-  const isOwner  = remote._owner === MY_USER_ID;
-  const isEditor = isOwner || (remote._editors || []).some(e => e.uid === MY_USER_ID);
+  // MY_USER_ID may not be set yet if auth hasn't resolved —
+  // use null-safe checks and treat unauthenticated users as guests
+  const uid = MY_USER_ID || null;
+  const isOwner  = uid && remote._owner === uid;
+  const isEditor = isOwner || (uid && (remote._editors || []).some(e => e.uid === uid));
 
   if (remote._permission === 'private' && !isEditor) {
     toast('This board is private'); return;
   }
 
   const boardName = remote.name || 'Shared Board';
-  const hasCode = !!(remote._hasCode || remote._accessCode); // _hasCode for new, _accessCode for legacy plaintext
+  const hasCode = !!(remote._hasCode || remote._accessCode);
 
   document.getElementById('join-board-name').textContent = boardName;
   document.getElementById('join-desc').textContent =
@@ -5062,21 +5050,39 @@ async function handleShareLink() {
 
     const existing = state.boards.find(b => b.firebaseId === boardId);
     if (!existing) {
-      const merged = migrate({ boards: [remote], members: state.members, activeBoardId: remote.id });
+      // Use the remote board's members (the owner's real team), not local placeholder members
+      const remoteMembers = remote.members || state.members;
+      const merged = migrate({ boards: [remote], members: remoteMembers, activeBoardId: remote.id });
       const newBoard = { ...merged.boards[0], firebaseId: boardId, _permission: remote._permission };
+
       // Resolve any pending invite for this user's email
       const user = auth.currentUser;
       const changed = await resolvePendingInvite(newBoard, user);
       if (changed) {
-        // Push the updated editors list to Firestore
         db.collection(BOARDS_COL).doc(boardId).update({
           _editors: newBoard._editors,
           _invites:  newBoard._invites,
         }).catch(() => {});
       }
-      state.boards.push(newBoard);
+
+      // If this is a fresh web session (only has placeholder boards), replace them
+      const hasOnlyPlaceholders = state.boards.every(b => !b.firebaseId);
+      if (hasOnlyPlaceholders) {
+        state.boards = [newBoard];
+        state.members = remoteMembers;
+      } else {
+        state.boards.push(newBoard);
+      }
       state.activeBoardId = newBoard.id;
     } else {
+      // Already have this board — switch to it and get latest data
+      const remoteMembers = remote.members || state.members;
+      const merged = migrate({ boards: [remote], members: remoteMembers, activeBoardId: remote.id });
+      const idx = state.boards.findIndex(b => b.firebaseId === boardId);
+      if (idx >= 0) {
+        state.boards[idx] = { ...merged.boards[0], firebaseId: boardId };
+        state.members = remoteMembers;
+      }
       state.activeBoardId = existing.id;
     }
     localStorage.setItem(LS_KEY, JSON.stringify(state));
@@ -5096,7 +5102,47 @@ async function initFirebaseSync() {
   syncDot.title = 'Connecting…';
   document.getElementById('presence-bar').prepend(syncDot);
 
-  // Show a loading overlay while auth resolves
+  addShareBadge();
+
+  // ── Share link path ───────────────────────────────────────────────────────
+  const sharedBoardId = getShareParam();
+  if (sharedBoardId) {
+    const overlay = document.createElement('div');
+    overlay.id = 'auth-loading';
+    overlay.innerHTML = `<div style="text-align:center">
+      <div style="font-size:2em;margin-bottom:12px">⚓</div>
+      <div style="font-size:0.9em;color:var(--text2)">Loading shared board…</div>
+    </div>`;
+    overlay.style.cssText = 'position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center';
+    document.body.appendChild(overlay);
+
+    // Suppress sign-in modal while we handle the share link
+    const _origShowSignIn = showSignInModal;
+    showSignInModal = () => {};
+
+    try {
+      // Must be authenticated before Firestore will allow the read
+      await authReadyPromise;
+      await handleShareLink();
+    } catch(e) {
+      console.warn('Share link error:', e);
+      toast('Could not load shared board: ' + e.message);
+    }
+
+    overlay.remove();
+    showSignInModal = _origShowSignIn;
+
+    // Start listeners for all boards including the newly joined one
+    state.boards.forEach(b => {
+      if (b.firebaseId) startListeningToBoard(b.firebaseId);
+    });
+    if (state.boards.find(b => b.firebaseId === sharedBoardId)) {
+      startPresence(sharedBoardId);
+    }
+    return;
+  }
+
+  // ── Normal path: wait for auth, then load owner boards ───────────────────
   const overlay = document.createElement('div');
   overlay.id = 'auth-loading';
   overlay.innerHTML = `<div style="text-align:center">
@@ -5106,31 +5152,15 @@ async function initFirebaseSync() {
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center';
   document.body.appendChild(overlay);
 
-  // Wait for Firebase Auth to resolve — this is instant if already signed in
   await authReadyPromise;
   overlay.remove();
 
-  // Share badge always visible
-  addShareBadge();
-
-  // Handle incoming share link first
-  const sharedBoardId = getShareParam();
-  if (sharedBoardId) {
-    await handleShareLink();
-    state.boards.forEach(b => {
-      if (b.firebaseId) startListeningToBoard(b.firebaseId);
-    });
-    startPresence(sharedBoardId);
-    return;
-  }
-
-  // Try to load from Firebase — authoritative source
+  // Load boards from Firebase
   const remoteBoards = await fbLoadAllBoards();
 
   if (remoteBoards && remoteBoards.length > 0) {
     const remoteIds = new Set(remoteBoards.map(b => b.firebaseId || b.id));
     const localOnly = state.boards.filter(b => !b.firebaseId && !remoteIds.has(b.id));
-
     const merged = migrate({
       boards: [...remoteBoards, ...localOnly],
       members: state.members,
@@ -5144,13 +5174,11 @@ async function initFirebaseSync() {
     render();
     setSyncDot('online');
   } else {
-    // First time — push local boards to Firebase under this auth UID
     state.boards.forEach(b => { if (!b.firebaseId) b.firebaseId = b.id; });
     localStorage.setItem(LS_KEY, JSON.stringify(state));
     await fbSaveAllBoards();
   }
 
-  // Start real-time listeners for all boards
   state.boards.forEach(b => {
     if (b.firebaseId) startListeningToBoard(b.firebaseId);
   });
