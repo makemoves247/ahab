@@ -4488,23 +4488,28 @@ auth.getRedirectResult().then(result => {
   if (result?.user) hideSignInModal();
 }).catch(() => {});
 
-// Anonymous / guest continue — works even if Firebase is unreachable
+// Anonymous / guest continue
 document.getElementById('btn-anon-signin').addEventListener('click', async () => {
-  const LOCAL_KEY = 'ahab_user_id';
-  // Try anonymous Firebase auth first for a real UID, fall back to localStorage
+  const btn = document.getElementById('btn-anon-signin');
+  btn.textContent = 'Signing in…';
+  btn.disabled = true;
   try {
-    const cred = await Promise.race([
-      auth.signInAnonymously(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000))
-    ]);
-    MY_USER_ID = cred.user.uid;
-    renderUserChip(cred.user);
+    await auth.signInAnonymously();
+    // onAuthStateChanged fires → resolves authReadyPromise, hides modal
   } catch(e) {
-    MY_USER_ID = localStorage.getItem(LOCAL_KEY) || ('u_' + uid());
-    localStorage.setItem(LOCAL_KEY, MY_USER_ID);
+    console.warn('Anonymous sign-in failed:', e.message);
+    btn.textContent = 'Could not connect — check your internet connection';
+    btn.disabled = false;
+    // Only fall back to offline mode if Firebase is completely unreachable
+    if (e.code === 'auth/network-request-failed') {
+      const LOCAL_KEY = 'ahab_user_id';
+      MY_USER_ID = localStorage.getItem(LOCAL_KEY) || ('u_' + uid());
+      localStorage.setItem(LOCAL_KEY, MY_USER_ID);
+      _authResolve(MY_USER_ID);
+      hideSignInModal();
+      setSyncIndicator('offline');
+    }
   }
-  _authResolve(MY_USER_ID);
-  hideSignInModal();
 });
 
 // ── User chip ─────────────────────────────────────────────
@@ -4762,17 +4767,26 @@ auth.onAuthStateChanged(async user => {
   }
 });
 
-// Safety timeout — if auth hasn't resolved in 8 seconds, fall back to guest
-setTimeout(() => {
-  if (!MY_USER_ID) {
-    console.warn('Auth timed out — falling back to guest mode');
+// Safety timeout — if auth hasn't resolved in 12 seconds (e.g. slow WKWebView init),
+// sign in anonymously so we always have a real Firebase Auth token.
+// A localStorage string ID has no auth token and Firestore will reject all writes.
+setTimeout(async () => {
+  if (MY_USER_ID) return; // already resolved
+  console.warn('Auth timed out — attempting anonymous sign-in');
+  try {
+    const cred = await auth.signInAnonymously();
+    // onAuthStateChanged will fire and resolve authReadyPromise
+  } catch(e) {
+    // Firebase unreachable — store local ID but don't try to sync
+    console.warn('Anonymous auth failed, going fully offline:', e.message);
     const LOCAL_KEY = 'ahab_user_id';
     MY_USER_ID = localStorage.getItem(LOCAL_KEY) || ('u_' + uid());
     localStorage.setItem(LOCAL_KEY, MY_USER_ID);
     _authResolve(MY_USER_ID);
     hideSignInModal();
+    setSyncIndicator('offline');
   }
-}, 8000);
+}, 12000);
 
 const USERS_COL  = 'users';
 const BOARDS_COL = 'boards';
@@ -4842,6 +4856,16 @@ function fbSaveAllBoards() {
     _saveTimer = setTimeout(async () => {
       try {
         if (!MY_USER_ID) await authReadyPromise;
+
+        // If we fell back to a localStorage ID (no real auth), skip Firebase sync
+        const currentUser = auth.currentUser;
+        if (!currentUser) {
+          console.warn('No Firebase auth — skipping cloud sync');
+          setSyncIndicator('offline');
+          resolve();
+          return;
+        }
+
         const batch = db.batch();
         for (const board of state.boards) {
           if (!board.firebaseId) board.firebaseId = board.id;
@@ -4879,6 +4903,7 @@ function fbSaveAllBoards() {
 async function fbLoadAllBoards() {
   try {
     if (!MY_USER_ID) await authReadyPromise;
+    if (!auth.currentUser) { setSyncIndicator('offline'); return null; }
     setSyncDot('syncing');
     const userSnap = await db.collection(USERS_COL).doc(MY_USER_ID).get();
     if (!userSnap.exists) { setSyncDot('offline'); return null; }
