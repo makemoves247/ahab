@@ -5033,7 +5033,9 @@ function fbSaveAllBoards() {
         for (const board of state.boards) {
           if (!board.firebaseId) board.firebaseId = board.id;
           const ref = db.collection(BOARDS_COL).doc(board.firebaseId);
-          batch.set(ref, { ...boardToDoc(board), _owner: MY_USER_ID, _updatedAt: Date.now() });
+          // Preserve the existing _owner — only claim ownership if board has none
+          const owner = board._owner || MY_USER_ID;
+          batch.set(ref, { ...boardToDoc(board), _owner: owner, _updatedAt: Date.now() });
         }
         const userRef = db.collection(USERS_COL).doc(MY_USER_ID);
         batch.set(userRef, {
@@ -5048,7 +5050,7 @@ function fbSaveAllBoards() {
         _pendingSave = false;
         console.error('fbSaveAllBoards error:', e.code, e.message);
         const msg = e.code === 'permission-denied'
-          ? 'Permissions error — check Firebase rules'
+          ? `Permission denied — you may be signed in as a different user than the board owner. Sign in with Google to match your original account.`
           : e.message?.includes('400') || e.message?.includes('API key')
           ? 'API key blocked — add app://localhost to allowed referrers'
           : 'Sync error — click to retry';
