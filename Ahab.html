@@ -1435,17 +1435,48 @@
       <div style="border-top:1px solid var(--border);padding-top:14px;margin-bottom:14px">
         <label class="modal-label">Share link</label>
         <p style="font-size:0.79em;color:var(--text3);margin:4px 0 8px">Anyone with this link can request access (subject to access code if set).</p>
-        <div style="display:flex;gap:8px;margin-bottom:10px">
+        <div style="display:flex;gap:8px;margin-bottom:14px">
           <input class="modal-input" id="share-link-input" readonly style="flex:1;font-size:0.82em;color:var(--text3)" />
           <button class="modal-btn confirm" id="btn-copy-link" style="flex-shrink:0;padding:8px 14px">Copy</button>
         </div>
 
-        <label class="modal-label">Access code (optional)</label>
-        <div style="display:flex;gap:8px;margin-top:4px;align-items:center">
-          <input class="modal-input" id="share-code-input" placeholder="Set a code to restrict access…" style="flex:1" />
-          <button class="modal-btn cancel" id="btn-save-code" style="flex-shrink:0">Save</button>
+        <!-- Access code management -->
+        <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <label class="modal-label" style="margin:0">Access code</label>
+            <div id="code-status-badge" style="font-size:0.72em;padding:2px 8px;border-radius:10px;font-weight:600"></div>
+          </div>
+
+          <!-- No code set state -->
+          <div id="code-none-state">
+            <p style="font-size:0.79em;color:var(--text3);margin-bottom:10px">No code required — anyone with the link can join.</p>
+            <button class="modal-btn confirm" id="btn-add-code" style="width:100%;padding:7px">＋ Add Access Code</button>
+          </div>
+
+          <!-- Code set state -->
+          <div id="code-set-state" style="display:none">
+            <p style="font-size:0.79em;color:var(--text3);margin-bottom:10px">A code is required to join this board.</p>
+            <div style="display:flex;gap:6px">
+              <button class="modal-btn cancel" id="btn-change-code" style="flex:1;padding:6px">✏ Change Code</button>
+              <button class="modal-btn cancel" id="btn-remove-code" style="flex:1;padding:6px;color:#ff6584">✕ Remove Code</button>
+            </div>
+          </div>
+
+          <!-- Code entry form (hidden until add/change clicked) -->
+          <div id="code-entry-form" style="display:none;margin-top:10px">
+            <div style="display:flex;gap:6px;align-items:center">
+              <div style="position:relative;flex:1">
+                <input class="modal-input" id="share-code-input" placeholder="Enter access code…"
+                       style="width:100%;padding-right:36px" autocomplete="off" />
+                <button id="btn-toggle-code-vis" title="Show/hide"
+                        style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px;padding:0;line-height:1">👁</button>
+              </div>
+              <button class="modal-btn confirm" id="btn-save-code" style="flex-shrink:0;padding:8px 14px">Save</button>
+              <button class="modal-btn cancel" id="btn-cancel-code" style="flex-shrink:0;padding:8px 10px">Cancel</button>
+            </div>
+            <p style="font-size:0.75em;color:var(--text3);margin-top:6px">Share this code with people you want to give access.</p>
+          </div>
         </div>
-        <p style="font-size:0.79em;color:var(--text3);margin-top:6px">Leave blank to allow anyone with the link.</p>
       </div>
 
       <div style="margin-bottom:14px">
@@ -4922,9 +4953,9 @@ function openShareModal() {
   document.getElementById('share-synced').style.display   = '';
   document.getElementById('share-status').textContent = '';
   document.getElementById('share-link-input').value = makeShareUrl(board.firebaseId);
-  document.getElementById('share-code-input').value = board._hasCode ? '••••••••' : '';
   document.getElementById(board._permission === 'view' ? 'perm-view' : 'perm-edit').checked = true;
   document.getElementById('invite-email').value = '';
+  renderCodeState(board);
   renderEditorList(board);
   document.getElementById('modal-share').classList.add('open');
 }
@@ -4945,17 +4976,90 @@ document.getElementById('btn-copy-link').addEventListener('click', () => {
   setTimeout(() => { const b = document.getElementById('btn-copy-link'); if(b) b.textContent = 'Copy'; }, 1800);
 });
 
-// Save access code + permission
+// ── Access code management ────────────────────────────────
+function renderCodeState(board) {
+  const badge    = document.getElementById('code-status-badge');
+  const noneEl   = document.getElementById('code-none-state');
+  const setEl    = document.getElementById('code-set-state');
+  const formEl   = document.getElementById('code-entry-form');
+  const input    = document.getElementById('share-code-input');
+  if (!badge) return;
+
+  if (board._hasCode) {
+    badge.textContent = '🔒 Code active';
+    badge.style.cssText = 'font-size:0.72em;padding:2px 8px;border-radius:10px;font-weight:600;background:rgba(108,99,255,0.15);color:var(--accent)';
+    noneEl.style.display = 'none';
+    setEl.style.display  = '';
+    formEl.style.display = 'none';
+  } else {
+    badge.textContent = '🔓 No code';
+    badge.style.cssText = 'font-size:0.72em;padding:2px 8px;border-radius:10px;font-weight:600;background:var(--surface3);color:var(--text3)';
+    noneEl.style.display = '';
+    setEl.style.display  = 'none';
+    formEl.style.display = 'none';
+  }
+  if (input) { input.value = ''; input.type = 'password'; }
+}
+
+// Show entry form
+document.getElementById('btn-add-code').addEventListener('click', () => {
+  document.getElementById('code-none-state').style.display = 'none';
+  document.getElementById('code-entry-form').style.display = '';
+  document.getElementById('share-code-input').focus();
+});
+document.getElementById('btn-change-code').addEventListener('click', () => {
+  document.getElementById('code-entry-form').style.display = '';
+  document.getElementById('share-code-input').focus();
+});
+document.getElementById('btn-cancel-code').addEventListener('click', () => {
+  const board = ab(); if (!board) return;
+  renderCodeState(board);
+});
+
+// Toggle visibility
+document.getElementById('btn-toggle-code-vis').addEventListener('click', () => {
+  const inp = document.getElementById('share-code-input');
+  const btn = document.getElementById('btn-toggle-code-vis');
+  if (inp.type === 'password') { inp.type = 'text';     btn.textContent = '🙈'; }
+  else                         { inp.type = 'password'; btn.textContent = '👁';  }
+});
+
+// Save code
 document.getElementById('btn-save-code').addEventListener('click', async () => {
   const board = ab(); if (!board) return;
   const raw = document.getElementById('share-code-input').value.trim();
-  board._accessCode = await hashCode(raw);   // store hash, never plaintext
-  board._hasCode = !!raw;                    // flag so join modal knows to prompt
+  if (!raw) { toast('Enter a code first'); return; }
+
+  const btn = document.getElementById('btn-save-code');
+  btn.disabled = true; btn.textContent = 'Saving…';
+
+  board._accessCode = await hashCode(raw);
+  board._hasCode    = true;
   board._permission = document.querySelector('input[name="share-perm"]:checked')?.value || 'edit';
   save();
-  document.getElementById('share-code-input').value = raw ? '••••••••' : '';
-  document.getElementById('share-status').textContent = '✓ Settings saved';
-  setTimeout(() => { const s = document.getElementById('share-status'); if(s) s.textContent = ''; }, 2000);
+  renderCodeState(board);
+  document.getElementById('share-status').textContent = '✓ Access code saved';
+  setTimeout(() => { const s = document.getElementById('share-status'); if(s) s.textContent = ''; }, 2500);
+  btn.disabled = false; btn.textContent = 'Save';
+});
+
+// Remove code
+document.getElementById('btn-remove-code').addEventListener('click', async () => {
+  const board = ab(); if (!board) return;
+  const btn = document.getElementById('btn-remove-code');
+  if (btn.dataset.confirm !== '1') {
+    btn.textContent = '⚠ Confirm remove';
+    btn.dataset.confirm = '1';
+    setTimeout(() => { if(btn) { btn.textContent = '✕ Remove Code'; delete btn.dataset.confirm; } }, 3000);
+    return;
+  }
+  board._accessCode = '';
+  board._hasCode    = false;
+  save();
+  renderCodeState(board);
+  delete btn.dataset.confirm;
+  document.getElementById('share-status').textContent = '✓ Access code removed';
+  setTimeout(() => { const s = document.getElementById('share-status'); if(s) s.textContent = ''; }, 2500);
 });
 
 // Sync now
