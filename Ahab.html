@@ -4464,22 +4464,50 @@ function hideSignInModal() {
 // Detect WKWebView (not Chrome/Firefox/Safari browser)
 const isWKWebView = !!(window.webkit?.messageHandlers?.nativeBridge);
 
-// Google sign-in
+// ── Swift → JS callbacks for native Google OAuth ──────────────────────────
+// Called by Swift after successful token exchange
+window.__googleAuthToken = async ({ idToken, accessToken }) => {
+  const btn = document.getElementById('btn-google-signin');
+  try {
+    const credential = firebase.auth.GoogleAuthProvider.credential(idToken, accessToken);
+    await auth.signInWithCredential(credential);
+    // onAuthStateChanged fires → resolves authReadyPromise, hides modal
+  } catch(e) {
+    console.error('signInWithCredential failed:', e);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<svg viewBox="0 0 24 24" style="width:18px;height:18px"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg> Try again — ${e.message.slice(0,40)}`;
+    }
+  }
+};
+
+window.__googleAuthError = (msg) => {
+  console.warn('Google OAuth error:', msg);
+  const btn = document.getElementById('btn-google-signin');
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = `<svg viewBox="0 0 24 24" style="width:18px;height:18px"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg> Try again`;
+  }
+};
+
+// Google sign-in button
 document.getElementById('btn-google-signin').addEventListener('click', async () => {
   const btn = document.getElementById('btn-google-signin');
   btn.disabled = true; btn.textContent = 'Signing in…';
+
+  if (isWKWebView) {
+    // Tell Swift to open ASWebAuthenticationSession
+    // Swift handles OAuth, exchanges code for tokens, calls window.__googleAuthToken
+    window.webkit.messageHandlers.nativeBridge.postMessage({ action: 'signInWithGoogle' });
+    // Button stays disabled until __googleAuthToken or __googleAuthError fires
+    return;
+  }
+
+  // Browser — use popup
   try {
     const provider = new firebase.auth.GoogleAuthProvider();
-    if (isWKWebView) {
-      // In WKWebView use signInWithRedirect — Firebase will navigate to Google,
-      // complete the OAuth flow, then redirect back. getRedirectResult() picks
-      // up the credential on the next page load.
-      await auth.signInWithRedirect(provider);
-      // Page navigates away — nothing more to do here
-    } else {
-      await auth.signInWithPopup(provider);
-      hideSignInModal();
-    }
+    await auth.signInWithPopup(provider);
+    hideSignInModal();
   } catch(e) {
     console.error('Google sign-in failed:', e);
     btn.disabled = false;
@@ -4487,18 +4515,10 @@ document.getElementById('btn-google-signin').addEventListener('click', async () 
   }
 });
 
-// Handle redirect result — fires when page loads after signInWithRedirect
+// getRedirectResult — only needed for browser redirect flow (not used in .app)
 auth.getRedirectResult().then(result => {
-  if (result?.user) {
-    hideSignInModal();
-    renderUserChip(result.user);
-  }
-}).catch(e => {
-  // auth/web-storage-unsupported can occur in restricted contexts — ignore
-  if (e.code !== 'auth/web-storage-unsupported') {
-    console.warn('getRedirectResult error:', e.code, e.message);
-  }
-});
+  if (result?.user) { hideSignInModal(); renderUserChip(result.user); }
+}).catch(() => {});
 
 // Anonymous / guest continue
 
