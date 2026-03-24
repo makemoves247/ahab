@@ -1670,6 +1670,7 @@ function migrate(data) {
       if (!t.todos) t.todos = [];
       if (!t.activity) t.activity = [];
     }));
+    if (!b._deletedTasks) b._deletedTasks = {};
   });
   return data;
 }
@@ -2274,7 +2275,11 @@ function showTaskCtx(e,gid,tid){
   });
   dd.querySelector('#tc-del').addEventListener('click',ev=>{
     ev.stopPropagation();closeAllDD();
-    const g=findGrp(gid);if(g){g.tasks=g.tasks.filter(t=>t.id!==tid);save();render();toast('Deleted');}
+    const g=findGrp(gid);if(g){
+      const board=ab();
+      if(board){if(!board._deletedTasks)board._deletedTasks={};board._deletedTasks[tid]=Date.now();}
+      g.tasks=g.tasks.filter(t=>t.id!==tid);save();render();toast('Deleted');
+    }
   });
   posDD(dd,e);dd.classList.add('open');
 }
@@ -4059,7 +4064,11 @@ showTaskCtx = function(e, gid, tid) {
     dd.querySelector('#tc-del-yes').addEventListener('click', ev2 => {
       ev2.stopPropagation(); closeAllDD();
       const g = findGrp(gid);
-      if (g) { g.tasks = g.tasks.filter(t => t.id !== tid); save(); render(); toast('Deleted'); }
+      if (g) {
+        const board = ab();
+        if (board) { if (!board._deletedTasks) board._deletedTasks = {}; board._deletedTasks[tid] = Date.now(); }
+        g.tasks = g.tasks.filter(t => t.id !== tid); save(); render(); toast('Deleted');
+      }
     });
   }, { once: true });
 };
@@ -4977,9 +4986,9 @@ function boardToDoc(board) {
   return JSON.parse(JSON.stringify(board));
 }
 
-// ── Task-level merge: newer updatedAt wins, never lose tasks ──
+// ── Task-level merge: newer updatedAt wins, respects deletions ──
 function mergeBoards(local, remote) {
-  // Start with remote as the base (has canonical structure/settings)
+  // Start with remote as the base (authoritative for structure/settings)
   const merged = JSON.parse(JSON.stringify(remote));
 
   // Build lookup maps
@@ -4988,26 +4997,38 @@ function mergeBoards(local, remote) {
   (local.groups  || []).forEach(g => g.tasks.forEach(t => { localTaskMap[t.id]  = { task: t, gid: g.id }; }));
   (remote.groups || []).forEach(g => g.tasks.forEach(t => { remoteTaskMap[t.id] = { task: t, gid: g.id }; }));
 
+  // Build a set of task IDs that have been explicitly deleted in remote
+  // _deletedTasks is a map of { taskId: deletedAt } stored on the board doc
+  const remoteDeleted = remote._deletedTasks || {};
+  const localDeleted  = local._deletedTasks  || {};
+
+  // Merge deletion records — once deleted, always deleted (highest timestamp wins)
+  const allDeleted = { ...localDeleted };
+  Object.entries(remoteDeleted).forEach(([tid, ts]) => {
+    allDeleted[tid] = Math.max(allDeleted[tid] || 0, ts);
+  });
+  merged._deletedTasks = allDeleted;
+
   // For each task in merged (remote), pick the newer version
   merged.groups.forEach(g => {
     g.tasks = g.tasks.map(remoteTask => {
       const localEntry = localTaskMap[remoteTask.id];
-      if (!localEntry) return remoteTask; // remote-only task — keep it
+      if (!localEntry) return remoteTask;
       const localTask = localEntry.task;
-      // Newer updatedAt wins
       return (localTask.updatedAt || 0) > (remoteTask.updatedAt || 0) ? localTask : remoteTask;
     });
   });
 
-  // Add any tasks that exist locally but not in remote (created offline)
+  // Add tasks that exist locally but not in remote — ONLY if not deleted
+  const cutoff = Date.now() - 30000; // tasks created >30s ago that aren't in remote = deleted
   Object.entries(localTaskMap).forEach(([tid, { task, gid }]) => {
-    if (remoteTaskMap[tid]) return; // already handled
-    // Find matching group by id, fall back to first group
+    if (remoteTaskMap[tid]) return; // already in remote
+    if (allDeleted[tid]) return;    // explicitly deleted
+    // If task was created recently (within 30s), it may just not have synced yet — keep it
+    // If it's older and not in remote, it was deleted on another client — don't restore it
+    if ((task.updatedAt || task.createdAt || 0) < cutoff) return;
     const targetGroup = merged.groups.find(g => g.id === gid) || merged.groups[0];
-    if (targetGroup) {
-      targetGroup.tasks.push(task);
-      console.log('[merge] Restored local-only task:', task.name);
-    }
+    if (targetGroup) targetGroup.tasks.push(task);
   });
 
   // Preserve access code fields from remote (authoritative)
