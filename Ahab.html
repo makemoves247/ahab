@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ahab</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%236c63ff'/%3E%3Cstop offset='100%25' stop-color='%23ff6584'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='16' cy='7' r='3.5' stroke='url(%23g)' stroke-width='2' fill='none'/%3E%3Cline x1='16' y1='10.5' x2='16' y2='26' stroke='url(%23g)' stroke-width='2' stroke-linecap='round'/%3E%3Cline x1='9' y1='16' x2='23' y2='16' stroke='url(%23g)' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M16 26 C16 26 8 23 7 19' stroke='url(%23g)' stroke-width='2' stroke-linecap='round' fill='none'/%3E%3Cpath d='M16 26 C16 26 24 23 25 19' stroke='url(%23g)' stroke-width='2' stroke-linecap='round' fill='none'/%3E%3Ccircle cx='7' cy='19' r='1.5' fill='url(%23g)'/%3E%3Ccircle cx='25' cy='19' r='1.5' fill='url(%23g)'/%3E%3C/svg%3E">
 <!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -1747,6 +1748,18 @@ const findTask = (gid,tid)=> findGrp(gid)?.tasks.find(t=>t.id===tid);
 const getVals  = (board,colId) => board.selectValues[colId]||[];
 const findVal  = (board,colId,valId) => getVals(board,colId).find(v=>v.id===valId);
 
+// Return the best available member list for a board.
+// Board docs embed the owner's members so collaborators can resolve names.
+function resolveMembers(board) {
+  const boardMembers = board?.members;
+  if (boardMembers?.length) return boardMembers;
+  return state.members;
+}
+// Resolve a single member by ID from a board's embedded member list
+function resolveMember(id, board) {
+  return resolveMembers(board || ab()).find(m => m.id === id);
+}
+
 let activeFilter='all', searchQuery='';
 function passesFilter(task){
   if(activeFilter!=='all'){
@@ -1845,7 +1858,7 @@ function sortTasks(tasks, board) {
       bv = b[colId] || b.updatedAt || 0;
     } else if (colId === 'assignee') {
       const nameOf = t => (t.assignees||[])
-        .map(id => state.members.find(m => m.id === id)?.name || '')
+        .map(id => resolveMember(id)?.name || '')
         .join(',').toLowerCase();
       av = nameOf(a); bv = nameOf(b);
     } else if (col.type === 'select') {
@@ -1950,7 +1963,7 @@ function renderBoard(){
 
       cols.forEach(col=>{
         if(col.id==='assignee'){
-          const avs=task.assignees.map(aid=>{const m=state.members.find(x=>x.id===aid);return m?`<div class="assignee-avatar" style="background:${m.color}" title="${esc(m.name)}">${initials(m.name)}</div>`:''}).join('');
+          const avs=task.assignees.map(aid=>{const m=resolveMember(aid);return m?`<div class="assignee-avatar" style="background:${m.color}" title="${esc(m.name)}">${initials(m.name)}</div>`:''}).join('');
           cells+=`<td class="col-assignee"><div class="assignee-cell">${avs}<div class="add-assignee" data-tid="${task.id}" data-gid="${group.id}">＋</div></div></td>`;
         } else if(col.id==='due'){
           const df=fmtDate(task.due),dc=overdue(task.due)&&!task.done?'date-overdue':'';
@@ -2229,7 +2242,7 @@ function showSelectDD(e,gid,tid,colId){
 function showAssigneeDD(e,gid,tid){
   const dd=document.getElementById('dd-assignee');
   const task=findTask(gid,tid);if(!task)return;
-  dd.innerHTML=state.members.map(m=>{
+  dd.innerHTML=resolveMembers(ab()).map(m=>{
     const a=task.assignees.includes(m.id);
     return `<div class="dropdown-item" data-mid="${m.id}">
       <div class="avatar" style="background:${m.color};width:18px;height:18px;font-size:8px">${initials(m.name)}</div>
@@ -2503,7 +2516,7 @@ function openTaskModal(gid,tid=null){
       wrap.innerHTML=`<label class="modal-label">Assignee</label>
         <select class="modal-select" id="mt-assignee">
           <option value="">Unassigned</option>
-          ${state.members.map(m=>`<option value="${m.id}" ${task?.assignees?.includes(m.id)?'selected':''}>${esc(m.name)}</option>`).join('')}
+          ${resolveMembers(ab()).map(m=>`<option value="${m.id}" ${task?.assignees?.includes(m.id)?'selected':''}>${esc(m.name)}</option>`).join('')}
         </select>`;
       df.appendChild(wrap);
     } else if(col.id==='due'){
@@ -2965,7 +2978,7 @@ function renderTaskPanel() {
     let chipHtml = '';
     if (col.id === 'assignee') {
       const names = (task.assignees||[])
-        .map(aid => state.members.find(m => m.id === aid)?.name || '')
+        .map(aid => resolveMember(aid)?.name || '')
         .filter(Boolean);
       chipHtml = `👤 ${names.length ? names.join(', ') : 'Unassigned'}`;
     } else if (col.id === 'due') {
@@ -2997,7 +3010,7 @@ function renderTaskPanel() {
   const sel = document.getElementById('tp-author-select');
   const prevVal = sel.value;
   sel.innerHTML = '<option value="">— Anonymous —</option>' +
-    state.members.map(m =>
+    resolveMembers(ab()).map(m =>
       `<option value="${m.id}" ${prevVal===m.id?'selected':''}>${esc(m.name)}</option>`
     ).join('');
   updateComposeAvatar();
@@ -3154,7 +3167,7 @@ function renderNotes(task) {
 
   area.innerHTML = notes.map(note => {
     const isSystem = !!note.system;
-    const author = !isSystem && state.members.find(m => m.id === note.authorId);
+    const author = !isSystem && resolveMember(note.authorId);
     const avatar = isSystem
       ? `<div class="tp-note-avatar system">✅</div>`
       : author
@@ -3248,7 +3261,7 @@ function updateComposeAvatar() {
   const avatarEl = document.getElementById('tp-compose-avatar');
   const mid = sel?.value;
   if (mid) {
-    const m = state.members.find(m => m.id === mid);
+    const m = resolveMember(mid);
     if (m) {
       avatarEl.style.background = m.color;
       avatarEl.textContent = initials(m.name);
@@ -3453,7 +3466,7 @@ function boardToRows(board) {
       colDefs.forEach(cd => {
         if (cd.type === 'assignee') {
           const names = (task.assignees || [])
-            .map(aid => state.members.find(m => m.id === aid)?.name || '')
+            .map(aid => resolveMember(aid)?.name || '')
             .filter(Boolean).join(', ');
           row.push(names);
         } else if (cd.type === 'select') {
@@ -4261,7 +4274,7 @@ function eventIcon(type) {
 
 function eventLabel(ev, board) {
   const authorName = ev.authorId
-    ? (state.members.find(m => m.id === ev.authorId)?.name || 'Someone')
+    ? (resolveMember(ev.authorId)?.name || 'Someone')
     : null;
   const by = authorName ? ` by <strong>${esc(authorName)}</strong>` : '';
 
@@ -5069,10 +5082,11 @@ function fbSaveAllBoards() {
           if (!board.firebaseId) board.firebaseId = board.id;
           const ref = db.collection(BOARDS_COL).doc(board.firebaseId);
           const owner = board._owner || MY_USER_ID;
-          // Record save time so listener can identify our own echo and suppress it
           _ourSaveTimes[board.firebaseId] = now;
+          // Embed members inside the board doc so collaborators can resolve names
           batch.set(ref, {
             ...boardToDoc(board),
+            members: JSON.parse(JSON.stringify(state.members)),
             _owner: owner,
             _updatedAt: now
           }, { merge: false });
@@ -5202,6 +5216,12 @@ function startListeningToBoard(firebaseId) {
         if (remote._updatedAt && local._updatedAt && remote._updatedAt < local._updatedAt) return;
 
         const merged = mergeBoards(local, remote);
+
+        // If remote has embedded members and we're a collaborator (not owner),
+        // sync them into state.members so the sidebar and dropdowns show the right team
+        if (remote.members?.length && remote._owner !== MY_USER_ID) {
+          state.members = remote.members;
+        }
         const hadConflict = JSON.stringify(local.groups) !== JSON.stringify(merged.groups);
 
         state.boards[idx] = merged;
