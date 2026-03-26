@@ -5254,28 +5254,50 @@ function stopAllListeners() {
 }
 
 // ── Presence ──────────────────────────────────────────────
+// ── Presence — tracks who is online on each board ─────────
 let _presenceRef   = null;
 let _presenceTimer = null;
 let _presenceUnsub = null;
+let _currentPresenceBoard = null;
+let _onlineViewers = []; // current list excluding self
+
+function getMyPresenceData() {
+  const currentUser = auth.currentUser;
+  const name  = currentUser?.displayName
+    || state.members[0]?.name
+    || (currentUser?.isAnonymous ? 'Guest' : 'User');
+  const email = currentUser?.email || '';
+  const color = state.members[0]?.color
+    || AVATAR_BG[Math.abs((MY_USER_ID||'x').charCodeAt(0)) % AVATAR_BG.length];
+  const photo = currentUser?.photoURL || '';
+  return { id: MY_USER_ID, name, email, color, photo, ts: Date.now() };
+}
 
 function startPresence(firebaseId) {
+  if (_currentPresenceBoard === firebaseId) return; // already on this board
   stopPresence();
-  const memberName = state.members[0]?.name || 'Viewer';
-  const memberColor = state.members[0]?.color || '#6c63ff';
+  _currentPresenceBoard = firebaseId;
+
   const ref = db.collection(BOARDS_COL).doc(firebaseId)
     .collection(PRESENCE_COL).doc(MY_USER_ID);
   _presenceRef = ref;
-  const data = { id: MY_USER_ID, name: memberName, color: memberColor, ts: Date.now() };
+
+  const data = getMyPresenceData();
   ref.set(data).catch(() => {});
+
+  // Heartbeat every 15s
   _presenceTimer = setInterval(() => {
-    ref.set({ ...data, ts: Date.now() }).catch(() => {});
-  }, 20000);
+    ref.set({ ...getMyPresenceData(), ts: Date.now() }).catch(() => {});
+  }, 15000);
+
+  // Listen for others
   _presenceUnsub = db.collection(BOARDS_COL).doc(firebaseId)
     .collection(PRESENCE_COL).onSnapshot(snap => {
-      const viewers = snap.docs
+      _onlineViewers = snap.docs
         .map(d => d.data())
-        .filter(p => p.id !== MY_USER_ID && Date.now() - p.ts < 45000);
-      renderPresence(viewers);
+        .filter(p => p.id !== MY_USER_ID && Date.now() - p.ts < 40000)
+        .sort((a, b) => a.name?.localeCompare(b.name));
+      renderPresence(_onlineViewers);
     }, () => {});
 }
 
@@ -5283,29 +5305,120 @@ function stopPresence() {
   if (_presenceRef) { _presenceRef.delete().catch(() => {}); _presenceRef = null; }
   if (_presenceTimer) { clearInterval(_presenceTimer); _presenceTimer = null; }
   if (_presenceUnsub) { _presenceUnsub(); _presenceUnsub = null; }
+  _currentPresenceBoard = null;
+  _onlineViewers = [];
   renderPresence([]);
 }
 
 function renderPresence(viewers) {
   const bar = document.getElementById('presence-bar');
   if (!bar) return;
+
+  const total = viewers.length;
+
+  if (total === 0) {
+    bar.innerHTML = '';
+    bar.title = '';
+    bar.style.cursor = 'default';
+    return;
+  }
+
+  // Show stacked avatars — clicking opens the popover
   bar.innerHTML = '';
-  viewers.slice(0, 5).forEach(v => {
+  bar.style.cursor = 'pointer';
+  bar.title = '';
+
+  const shown = viewers.slice(0, 4);
+  shown.forEach(v => {
     const el = document.createElement('div');
     el.className = 'presence-avatar';
-    el.style.background = v.color;
-    el.title = esc(v.name || 'Viewer');
-    el.textContent = initials(v.name || '?');
+    el.style.background = v.color || '#6c63ff';
+    if (v.photo) {
+      el.style.backgroundImage = `url(${v.photo})`;
+      el.style.backgroundSize  = 'cover';
+      el.style.backgroundPosition = 'center';
+      el.textContent = '';
+    } else {
+      el.textContent = initials(v.name || '?');
+    }
     bar.appendChild(el);
   });
-  if (viewers.length > 5) {
+  if (total > 4) {
     const el = document.createElement('div');
     el.className = 'presence-avatar';
-    el.style.cssText = 'background:var(--surface3);color:var(--text2)';
-    el.textContent = `+${viewers.length - 5}`;
+    el.style.cssText = 'background:var(--surface3);color:var(--text2);font-size:0.6em';
+    el.textContent = `+${total - 4}`;
     bar.appendChild(el);
   }
+
+  // Online dot + count label
+  const lbl = document.createElement('div');
+  lbl.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:0.75em;color:var(--text2);margin-left:4px';
+  lbl.innerHTML = `<div style="width:6px;height:6px;border-radius:50%;background:#43e97b;flex-shrink:0"></div>${total} online`;
+  bar.appendChild(lbl);
 }
+
+// ── Presence popover ──────────────────────────────────────
+(function setupPresencePopover() {
+  // Create the popover element
+  const pop = document.createElement('div');
+  pop.id = 'presence-popover';
+  pop.style.cssText = `
+    position:fixed;z-index:700;min-width:220px;max-width:280px;
+    background:var(--dd-bg);border:1px solid var(--border);
+    border-radius:var(--radius);box-shadow:0 8px 24px var(--shadow-dd);
+    padding:6px;display:none;
+  `;
+  document.body.appendChild(pop);
+
+  document.getElementById('presence-bar').addEventListener('click', e => {
+    if (_onlineViewers.length === 0) return;
+    e.stopPropagation();
+    const bar = document.getElementById('presence-bar');
+    const rect = bar.getBoundingClientRect();
+
+    // Build content
+    const myData = getMyPresenceData();
+    const all = [{ ...myData, _isSelf: true }, ..._onlineViewers];
+
+    pop.innerHTML = `
+      <div style="padding:6px 8px 4px;font-size:0.72em;font-weight:600;letter-spacing:0.8px;
+                  text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border);
+                  margin-bottom:4px">
+        Online now
+      </div>
+      ${all.map(v => `
+        <div style="display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:var(--radius-sm)">
+          <div style="width:28px;height:28px;border-radius:50%;background:${v.color};flex-shrink:0;
+                      display:flex;align-items:center;justify-content:center;
+                      font-size:0.7em;font-weight:700;color:#fff;
+                      ${v.photo ? `background-image:url(${v.photo});background-size:cover;background-position:center` : ''}">
+            ${v.photo ? '' : initials(v.name || '?')}
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:0.86em;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+              ${esc(v.name || 'Unknown')}${v._isSelf ? ' <span style="color:var(--text3);font-weight:400">(you)</span>' : ''}
+            </div>
+            ${v.email ? `<div style="font-size:0.75em;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(v.email)}</div>` : ''}
+          </div>
+          <div style="width:7px;height:7px;border-radius:50%;background:#43e97b;flex-shrink:0"></div>
+        </div>
+      `).join('')}
+    `;
+
+    // Position below the presence bar
+    pop.style.display = 'block';
+    const popRect = pop.getBoundingClientRect();
+    let top  = rect.bottom + 6;
+    let left = rect.right - popRect.width;
+    if (left < 8) left = 8;
+    pop.style.top  = top  + 'px';
+    pop.style.left = left + 'px';
+  });
+
+  // Close on outside click
+  document.addEventListener('click', () => { pop.style.display = 'none'; });
+})();
 
 // ── Sync dot ──────────────────────────────────────────────
 function setSyncDot(s) { setSyncIndicator(s); } // legacy alias
@@ -5726,6 +5839,22 @@ async function initFirebaseSync() {
 
   state.boards.forEach(b => {
     if (b.firebaseId) startListeningToBoard(b.firebaseId);
+  });
+
+  // Start presence on the active board
+  const activeBoard = ab();
+  if (activeBoard?.firebaseId) startPresence(activeBoard.firebaseId);
+
+  // Switch presence when the user clicks a different board in the sidebar
+  document.addEventListener('click', e => {
+    const boardItem = e.target.closest('.board-item');
+    if (!boardItem) return;
+    setTimeout(() => {
+      const b = ab();
+      if (b?.firebaseId && b.firebaseId !== _currentPresenceBoard) {
+        startPresence(b.firebaseId);
+      }
+    }, 80);
   });
 }
 
