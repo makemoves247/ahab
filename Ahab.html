@@ -3167,24 +3167,28 @@ function renderNotes(task) {
 
   area.innerHTML = notes.map(note => {
     const isSystem = !!note.system;
-    const author = !isSystem && resolveMember(note.authorId);
+    const author = !isSystem && resolveMember(note.authorId, ab());
+    const displayName = author?.name || note.authorName || null;
+    const displayColor = author?.color || '#6c63ff';
     const avatar = isSystem
       ? `<div class="tp-note-avatar system">✅</div>`
-      : author
-        ? `<div class="tp-note-avatar" style="background:${author.color}">${initials(author.name)}</div>`
-        : `<div class="tp-note-avatar system">💬</div>`;
-    const authorName = isSystem ? 'System' : (author ? esc(author.name) : 'Anonymous');
+      : displayName
+        ? `<div class="tp-note-avatar" style="background:${displayColor}">${initials(displayName)}</div>`
+        : `<div class="tp-note-avatar" style="background:var(--surface3);color:var(--text3);font-size:0.7em">?</div>`;
+    const authorLabel = isSystem ? 'System' : (displayName ? esc(displayName) : '<span style="color:var(--text3);font-style:italic">Anonymous</span>');
     const timeStr = formatNoteTime(note.createdAt);
     const editedMark = note.editedAt ? ` <span style="font-size:0.75em;color:var(--text3)">(edited)</span>` : '';
     const noteStyle = isSystem
       ? 'background:rgba(67,233,123,0.07);border-color:rgba(67,233,123,0.2);color:var(--text3);font-style:italic;'
       : '';
+    const authorBtn = isSystem ? `<span class="tp-note-author">${authorLabel}</span>`
+      : `<button class="tp-note-author tp-note-author-btn" data-note-id="${note.id}" title="Change author" style="background:none;border:none;padding:0;cursor:pointer;font:inherit;text-align:left">${authorLabel} <span style="font-size:0.72em;color:var(--text3)">▾</span></button>`;
     return `
       <div class="tp-note" data-note-id="${note.id}">
         ${avatar}
         <div class="tp-note-body">
           <div class="tp-note-header">
-            <span class="tp-note-author" style="${isSystem?'color:var(--text3)':''}">${authorName}</span>
+            ${authorBtn}
             <span class="tp-note-time" title="${new Date(note.createdAt).toLocaleString()}">${timeStr}${editedMark}</span>
             <button class="tp-note-del" data-note-id="${note.id}" title="Delete note">✕</button>
           </div>
@@ -3192,6 +3196,83 @@ function renderNotes(task) {
         </div>
       </div>`;
   }).join('');
+
+  // Count anonymous notes for the bulk-remove button
+  const anonCount = notes.filter(n => !n.system && !n.authorId && !n.authorName).length;
+  if (anonCount > 0) {
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'modal-btn cancel';
+    removeBtn.style.cssText = 'margin:6px 0 2px;width:100%;font-size:0.8em;padding:5px 10px;color:#ff6584';
+    removeBtn.textContent = `🗑 Remove ${anonCount} anonymous note${anonCount===1?'':'s'}`;
+    removeBtn.addEventListener('click', () => {
+      const { gid, tid } = panelCtx;
+      const t = findTask(gid, tid); if (!t) return;
+      t.notes = (t.notes||[]).filter(n => n.system || n.authorId || n.authorName);
+      touch(t); save(); renderNotes(t);
+    });
+    area.after(removeBtn);
+  } else {
+    // Remove any previous remove-anon button
+    const prev = area.nextElementSibling;
+    if (prev?.textContent?.includes('anonymous')) prev.remove();
+  }
+
+  // Change author dropdown
+  area.querySelectorAll('.tp-note-author-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      // Close any open author picker
+      document.querySelectorAll('.note-author-picker').forEach(p => p.remove());
+
+      const { gid, tid } = panelCtx;
+      const t = findTask(gid, tid); if (!t) return;
+      const note = (t.notes||[]).find(n => n.id === btn.dataset.noteId);
+      if (!note) return;
+
+      const members = resolveMembers(ab());
+      const picker = document.createElement('div');
+      picker.className = 'note-author-picker';
+      picker.style.cssText = `
+        position:fixed;z-index:600;min-width:180px;
+        background:var(--dd-bg);border:1px solid var(--border);
+        border-radius:var(--radius-sm);box-shadow:0 6px 20px var(--shadow-dd);
+        padding:4px;
+      `;
+
+      const options = [
+        { id: '', name: '— No author (anonymous)' },
+        ...members.map(m => ({ id: m.id, name: m.name, color: m.color }))
+      ];
+      picker.innerHTML = options.map(opt => `
+        <div class="dropdown-item note-author-opt" data-mid="${opt.id}" style="display:flex;align-items:center;gap:8px">
+          ${opt.color ? `<div style="width:16px;height:16px;border-radius:50%;background:${opt.color};flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:0.55em;color:#fff;font-weight:700">${initials(opt.name)}</div>` : '<div style="width:16px;height:16px"></div>'}
+          <span>${esc(opt.name)}</span>
+        </div>`).join('');
+
+      document.body.appendChild(picker);
+      const rect = btn.getBoundingClientRect();
+      picker.style.top  = (rect.bottom + 4) + 'px';
+      picker.style.left = rect.left + 'px';
+
+      picker.querySelectorAll('.note-author-opt').forEach(opt => {
+        opt.addEventListener('click', ev => {
+          ev.stopPropagation();
+          const mid = opt.dataset.mid;
+          const member = members.find(m => m.id === mid);
+          note.authorId   = mid || null;
+          note.authorName = member?.name || null;
+          note.editedAt   = Date.now();
+          touch(t); save(); renderNotes(t);
+          picker.remove();
+        });
+      });
+
+      setTimeout(() => {
+        const close = () => { picker.remove(); document.removeEventListener('click', close); };
+        document.addEventListener('click', close);
+      }, 0);
+    });
+  });
 
   // Delete note
   area.querySelectorAll('.tp-note-del').forEach(btn => {
@@ -3282,10 +3363,11 @@ document.getElementById('tp-submit-note').addEventListener('click', () => {
   const { gid, tid } = panelCtx;
   const task = findTask(gid, tid); if (!task) return;
   if (!task.notes) task.notes = [];
-  const authorId = document.getElementById('tp-author-select').value || null;
-  const noteObj = { id: uid(), text, authorId, createdAt: Date.now() };
+  const authorId  = document.getElementById('tp-author-select').value || null;
+  const authorName = authorId ? (resolveMembers(ab()).find(m => m.id === authorId)?.name || null) : null;
+  const noteObj = { id: uid(), text, authorId, authorName, createdAt: Date.now() };
   task.notes.push(noteObj);
-  logActivity(task, 'note_added', { text, authorId });
+  logActivity(task, 'note_added', { text, authorId, authorName });
   touch(task); save();
   input.value = '';
   renderNotes(task);
@@ -4274,7 +4356,7 @@ function eventIcon(type) {
 
 function eventLabel(ev, board) {
   const authorName = ev.authorId
-    ? (resolveMember(ev.authorId)?.name || 'Someone')
+    ? (resolveMember(ev.authorId)?.name || ev.authorName || 'Someone')
     : null;
   const by = authorName ? ` by <strong>${esc(authorName)}</strong>` : '';
 
