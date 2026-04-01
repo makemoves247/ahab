@@ -791,7 +791,30 @@
   }
   .tp-compose-input:focus { border-color: var(--accent); }
   .tp-compose-input::placeholder { color: var(--text3); }
-  .tp-compose-actions { display: flex; gap: 7px; align-items: center; }
+  .tp-compose-actions { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+  /* Sentiment toggle */
+  .sentiment-btns { display: flex; gap: 3px; }
+  .sentiment-btn {
+    padding: 3px 7px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--input-bg);
+    font-size: 0.82em; cursor: pointer; transition: all 0.12s; line-height: 1.4;
+    color: var(--text3);
+  }
+  .sentiment-btn:hover { border-color: var(--border2); }
+  .sentiment-btn.active-positive { background: rgba(67,233,123,0.15); border-color: #43e97b; color: #43e97b; }
+  .sentiment-btn.active-negative { background: rgba(255,101,132,0.15); border-color: #ff6584; color: #ff6584; }
+  .sentiment-btn.active-neutral  { background: rgba(247,151,30,0.12);  border-color: #f7971e; color: #f7971e; }
+  /* Sentiment badge on note */
+  .note-sentiment {
+    display: inline-flex; align-items: center; padding: 1px 6px;
+    border-radius: 10px; font-size: 0.72em; font-weight: 600;
+    cursor: pointer; user-select: none; transition: all 0.12s; flex-shrink: 0;
+  }
+  .note-sentiment:hover { opacity: 0.75; }
+  .note-sentiment.positive { background: rgba(67,233,123,0.15); color: #43e97b; border: 1px solid rgba(67,233,123,0.3); }
+  .note-sentiment.negative { background: rgba(255,101,132,0.15); color: #ff6584; border: 1px solid rgba(255,101,132,0.3); }
+  .note-sentiment.neutral  { background: rgba(247,151,30,0.12);  color: #f7971e; border: 1px solid rgba(247,151,30,0.3); }
+  .note-sentiment.unset    { background: var(--surface2); color: var(--text3); border: 1px solid var(--border); }
   .tp-author-select {
     background: var(--input-bg); border: 1px solid var(--input-border);
     border-radius: var(--radius-sm); color: var(--text2);
@@ -1207,6 +1230,11 @@
       <div class="tp-compose-wrap">
         <textarea class="tp-compose-input" id="tp-compose-input" placeholder="Add a note…"></textarea>
         <div class="tp-compose-actions">
+          <div class="sentiment-btns" id="compose-sentiment-btns">
+            <button class="sentiment-btn" data-s="positive" title="Positive">👍</button>
+            <button class="sentiment-btn" data-s="neutral"  title="Neutral">➖</button>
+            <button class="sentiment-btn" data-s="negative" title="Negative">👎</button>
+          </div>
           <select class="tp-author-select" id="tp-author-select">
             <option value="">— Anonymous —</option>
           </select>
@@ -1391,11 +1419,22 @@
     <div id="rpt-preview" style="flex:1;overflow-y:auto;padding:20px 24px;font-size:0.9em;line-height:1.6;min-height:200px">
       <div style="color:var(--text3);text-align:center;padding:40px 0">Configure filters above and click Generate Report</div>
     </div>
+    <div id="rpt-ai-panel" style="display:none;border-top:1px solid var(--border);padding:16px 24px 0;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <div style="font-size:0.86em;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px">
+          <span style="background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">✦ AI Executive Summary</span>
+        </div>
+        <button id="rpt-ai-close" style="margin-left:auto;background:none;border:none;color:var(--text3);cursor:pointer;font-size:14px;padding:2px 6px">✕</button>
+      </div>
+      <div id="rpt-ai-output" style="font-size:0.88em;line-height:1.7;color:var(--text2);max-height:220px;overflow-y:auto;white-space:pre-wrap;padding-bottom:12px"></div>
+    </div>
+
     <!-- Footer actions -->
     <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0">
       <button class="modal-btn cancel" id="rpt-close">Close</button>
       <button class="modal-btn cancel" id="rpt-export-rtf">Export RTF</button>
       <button class="modal-btn cancel" id="rpt-export-pdf">Export PDF</button>
+      <button class="modal-btn cancel" id="rpt-ai-summary" style="background:linear-gradient(135deg,rgba(108,99,255,0.15),rgba(255,101,132,0.15));border-color:rgba(108,99,255,0.4);color:var(--accent)">✦ AI Summary</button>
       <button class="modal-btn confirm" id="rpt-generate">Generate Report</button>
     </div>
   </div>
@@ -3181,6 +3220,8 @@ function renderNotes(task) {
     const noteStyle = isSystem
       ? 'background:rgba(67,233,123,0.07);border-color:rgba(67,233,123,0.2);color:var(--text3);font-style:italic;'
       : '';
+    const sentimentMap = { positive: '👍 Positive', negative: '👎 Negative', neutral: '➖ Neutral' };
+    const sentimentBadge = isSystem ? '' : `<button class="note-sentiment ${note.sentiment || 'unset'}" data-note-id="${note.id}" title="Click to change sentiment">${sentimentMap[note.sentiment] || '○ Tag'}</button>`;
     const authorBtn = isSystem ? `<span class="tp-note-author">${authorLabel}</span>`
       : `<button class="tp-note-author tp-note-author-btn" data-note-id="${note.id}" title="Change author" style="background:none;border:none;padding:0;cursor:pointer;font:inherit;text-align:left">${authorLabel} <span style="font-size:0.72em;color:var(--text3)">▾</span></button>`;
     return `
@@ -3190,6 +3231,7 @@ function renderNotes(task) {
           <div class="tp-note-header">
             ${authorBtn}
             <span class="tp-note-time" title="${new Date(note.createdAt).toLocaleString()}">${timeStr}${editedMark}</span>
+            ${sentimentBadge}
             <button class="tp-note-del" data-note-id="${note.id}" title="Delete note">✕</button>
           </div>
           <div class="tp-note-text" data-note-id="${note.id}" style="${noteStyle}">${esc(note.text)}</div>
@@ -3217,7 +3259,21 @@ function renderNotes(task) {
     if (prev?.textContent?.includes('anonymous')) prev.remove();
   }
 
-  // Change author dropdown
+  // Cycle sentiment on badge click
+  const sentimentOrder = [null, 'positive', 'neutral', 'negative'];
+  area.querySelectorAll('.note-sentiment').forEach(badge => {
+    badge.addEventListener('click', e => {
+      e.stopPropagation();
+      const { gid, tid } = panelCtx;
+      const t = findTask(gid, tid); if (!t) return;
+      const note = (t.notes||[]).find(n => n.id === badge.dataset.noteId);
+      if (!note) return;
+      const idx = sentimentOrder.indexOf(note.sentiment || null);
+      note.sentiment = sentimentOrder[(idx + 1) % sentimentOrder.length];
+      note.editedAt = Date.now();
+      touch(t); save(); renderNotes(t);
+    });
+  });
   area.querySelectorAll('.tp-note-author-btn').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
@@ -3357,19 +3413,40 @@ document.getElementById('tp-author-select')
   .addEventListener('change', updateComposeAvatar);
 
 // Submit note
+// Sentiment toggle state for compose
+let _composeSentiment = null;
+document.querySelectorAll('#compose-sentiment-btns .sentiment-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const s = btn.dataset.s;
+    if (_composeSentiment === s) {
+      // Toggle off
+      _composeSentiment = null;
+      document.querySelectorAll('#compose-sentiment-btns .sentiment-btn').forEach(b => b.className = 'sentiment-btn');
+    } else {
+      _composeSentiment = s;
+      document.querySelectorAll('#compose-sentiment-btns .sentiment-btn').forEach(b => {
+        b.className = 'sentiment-btn' + (b.dataset.s === s ? ` active-${s}` : '');
+      });
+    }
+  });
+});
+
 document.getElementById('tp-submit-note').addEventListener('click', () => {
   const input = document.getElementById('tp-compose-input');
   const text = input.value.trim(); if (!text) return;
   const { gid, tid } = panelCtx;
   const task = findTask(gid, tid); if (!task) return;
   if (!task.notes) task.notes = [];
-  const authorId  = document.getElementById('tp-author-select').value || null;
+  const authorId   = document.getElementById('tp-author-select').value || null;
   const authorName = authorId ? (resolveMembers(ab()).find(m => m.id === authorId)?.name || null) : null;
-  const noteObj = { id: uid(), text, authorId, authorName, createdAt: Date.now() };
+  const noteObj    = { id: uid(), text, authorId, authorName, sentiment: _composeSentiment, createdAt: Date.now() };
   task.notes.push(noteObj);
-  logActivity(task, 'note_added', { text, authorId, authorName });
+  logActivity(task, 'note_added', { text, authorId, authorName, sentiment: _composeSentiment });
   touch(task); save();
   input.value = '';
+  // Reset sentiment
+  _composeSentiment = null;
+  document.querySelectorAll('#compose-sentiment-btns .sentiment-btn').forEach(b => b.className = 'sentiment-btn');
   renderNotes(task);
   renderBoardNoteCount(tid);
 });
@@ -4316,10 +4393,19 @@ function gatherReportData() {
       const noteEvents = incNotes ? (task.notes || [])
         .filter(n => !n.system && n.createdAt >= from && n.createdAt <= to &&
           !events.find(e => e.type === 'note_added' && Math.abs(e.ts - n.createdAt) < 100))
-        .map(n => ({ type: 'note_added', ts: n.createdAt, text: n.text, authorId: n.authorId }))
+        .map(n => ({ type: 'note_added', ts: n.createdAt, text: n.text, authorId: n.authorId, authorName: n.authorName, sentiment: n.sentiment }))
         : [];
 
-      const allEvents = [...events, ...noteEvents].sort((a, b) => a.ts - b.ts);
+      // Sort: non-note events chronologically; notes grouped by sentiment then time
+      const sentimentOrder = { positive: 0, neutral: 1, negative: 2, null: 3, undefined: 3 };
+      const nonNoteEvents = [...events, ...noteEvents].filter(e => e.type !== 'note_added').sort((a, b) => a.ts - b.ts);
+      const noteEventsAll = [...events, ...noteEvents].filter(e => e.type === 'note_added')
+        .sort((a, b) => {
+          const sa = sentimentOrder[a.sentiment] ?? 3;
+          const sb = sentimentOrder[b.sentiment] ?? 3;
+          return sa !== sb ? sa - sb : a.ts - b.ts;
+        });
+      const allEvents = [...nonNoteEvents, ...noteEventsAll];
       if (allEvents.length === 0) return;
 
       totalEvents += allEvents.length;
@@ -4344,12 +4430,17 @@ function gatherReportData() {
 }
 
 // ── Event label helpers ───────────────────────────────────
-function eventIcon(type) {
+function eventIcon(type, ev) {
+  if (type === 'note_added') {
+    return ev?.sentiment === 'positive' ? '👍'
+         : ev?.sentiment === 'negative' ? '👎'
+         : ev?.sentiment === 'neutral'  ? '➖'
+         : '💬';
+  }
   const icons = {
     created:       '✨', status_change: '🔄', done_toggle: '☑',
     field_change:  '✏️', todo_added:   '☐',  todo_done:   '✅',
-    todo_undone:   '↩',  todo_deleted: '🗑',  note_added:  '💬',
-    note_deleted:  '🗑',
+    todo_undone:   '↩',  todo_deleted: '🗑',  note_deleted: '🗑',
   };
   return icons[type] || '•';
 }
@@ -4381,7 +4472,11 @@ function eventLabel(ev, board) {
     case 'todo_deleted':  return `To-do removed: "<em>${esc(ev.text||'')}</em>"`;
     case 'note_added': {
       const txt = (ev.text||'').slice(0, 120) + ((ev.text||'').length > 120 ? '…' : '');
-      return `Note added${by}: "<em>${esc(txt)}</em>"`;
+      const sentimentLabel = ev.sentiment === 'positive' ? ' <span style="color:#43e97b;font-weight:600">[Positive]</span>'
+        : ev.sentiment === 'negative' ? ' <span style="color:#ff6584;font-weight:600">[Negative]</span>'
+        : ev.sentiment === 'neutral'  ? ' <span style="color:#f7971e;font-weight:600">[Neutral]</span>'
+        : '';
+      return `Note${sentimentLabel} added${by}: "<em>${esc(txt)}</em>"`;
     }
     default: return esc(ev.type);
   }
@@ -4429,7 +4524,7 @@ document.getElementById('rpt-generate').addEventListener('click', () => {
         events.forEach(ev => {
           html += `
               <div class="rpt-event">
-                <div class="rpt-event-icon">${eventIcon(ev.type)}</div>
+                <div class="rpt-event-icon">${eventIcon(ev.type, ev)}</div>
                 <div class="rpt-event-body">
                   <span class="rpt-event-text">${eventLabel(ev, board)}</span>
                   <span class="rpt-event-time">${fmtTs(ev.ts)}</span>
@@ -4569,7 +4664,7 @@ document.getElementById('rpt-export-rtf').addEventListener('click', () => {
           // Strip HTML tags from eventLabel
           const labelHtml = eventLabel(ev, board);
           const labelText = labelHtml.replace(/<[^>]+>/g, '');
-          const icon = eventIcon(ev.type);
+          const icon = eventIcon(ev.type, ev);
           rtf += `{\\fs18   ${rtfEsc(icon + ' ' + labelText)}\\par}\n`;
           rtf += `{\\fs16\\cf2     ${rtfEsc(fmtTs(ev.ts))}\\par}\n`;
         });
@@ -4605,8 +4700,131 @@ document.getElementById('rpt-export-rtf').addEventListener('click', () => {
   toast('RTF report downloaded');
 });
 
-// ══════════════════════════════════════════════════════════
-//  AUTHENTICATION — Google Sign-In
+// ── AI Executive Summary ──────────────────────────────────
+document.getElementById('rpt-ai-close').addEventListener('click', () => {
+  document.getElementById('rpt-ai-panel').style.display = 'none';
+});
+
+document.getElementById('rpt-ai-summary').addEventListener('click', async () => {
+  const data = gatherReportData();
+  if (!data) { toast('Generate a report first'); return; }
+  const preview = document.getElementById('rpt-preview');
+  if (!preview.querySelector('.rpt-header')) { toast('Generate a report first'); return; }
+
+  const btn = document.getElementById('rpt-ai-summary');
+  const panel = document.getElementById('rpt-ai-panel');
+  const output = document.getElementById('rpt-ai-output');
+
+  btn.disabled = true;
+  btn.textContent = '✦ Generating…';
+  panel.style.display = 'block';
+  output.textContent = '';
+
+  // Build a concise text summary of the report data for the prompt
+  const { board, dateLabel, reportGroups, stats } = data;
+
+  let reportText = `Board: ${board.name}\nPeriod: ${dateLabel}\n\n`;
+  reportText += `Summary stats: ${stats.totalTasks} tasks with activity, ${stats.newTasks} new tasks created, `;
+  reportText += `${stats.completedTodos} to-dos completed, ${stats.notesAdded} notes added.\n\n`;
+
+  reportGroups.forEach(({ group, taskBlocks }) => {
+    reportText += `GROUP: ${group.name}\n`;
+    taskBlocks.forEach(({ task, events }) => {
+      reportText += `  Task: "${task.name}" [${task.done ? 'Complete' : 'In Progress'}]\n`;
+      events.forEach(ev => {
+        const label = (() => {
+          switch(ev.type) {
+            case 'created':       return 'Task created';
+            case 'status_change': return `Status: ${ev.prev} → ${ev.next}`;
+            case 'done_toggle':   return ev.done ? 'Marked complete' : 'Marked incomplete';
+            case 'field_change':  return `${ev.field} changed: ${ev.prev} → ${ev.next}`;
+            case 'todo_added':    return `To-do added: "${ev.text}"`;
+            case 'todo_done':     return `To-do completed: "${ev.text}"`;
+            case 'note_added': {
+              const sentiment = ev.sentiment ? ` [${ev.sentiment}]` : '';
+              const author = ev.authorName ? ` (${ev.authorName})` : '';
+              return `Note${sentiment}${author}: "${(ev.text||'').slice(0, 200)}"`;
+            }
+            default: return ev.type;
+          }
+        })();
+        reportText += `    - ${label}\n`;
+      });
+    });
+    reportText += '\n';
+  });
+
+  const prompt = `You are an executive assistant summarising project activity for a busy leader.
+
+Below is raw activity data from a project management board for the period ${dateLabel}.
+
+Write a concise, professional executive summary of 3–5 paragraphs covering:
+1. Overall progress and momentum
+2. Key accomplishments and completed work
+3. Any concerns, blockers, or negative-sentiment notes that need attention
+4. Notable trends or patterns across tasks
+5. A brief recommended focus for the next period
+
+Keep the tone confident and action-oriented. Use specific task and group names. Do not use bullet points — write in flowing prose. Do not include a title heading.
+
+RAW ACTIVITY DATA:
+${reportText}`;
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1024,
+        stream: true,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error?.message || `API error ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep incomplete line
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6).trim();
+        if (data === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(data);
+          const delta = parsed.delta?.text || '';
+          if (delta) {
+            output.textContent += delta;
+            output.scrollTop = output.scrollHeight;
+          }
+        } catch(e) {}
+      }
+    }
+
+    // Tidy up any trailing whitespace
+    output.textContent = output.textContent.trim();
+
+  } catch(e) {
+    output.textContent = `Error: ${e.message}`;
+    console.error('AI summary error:', e);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '✦ AI Summary';
+});
 // ══════════════════════════════════════════════════════════
 
 // ── Sign-in modal ─────────────────────────────────────────
