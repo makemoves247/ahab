@@ -988,6 +988,35 @@
   #dd-move-task::-webkit-scrollbar { width: 4px; }
   #dd-move-task::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
 
+  /* ── WHAT'S NEW ── */
+  .wn-board-section { margin-bottom: 18px; }
+  .wn-board-title {
+    font-size: 0.78em; font-weight: 700; letter-spacing: 0.7px;
+    text-transform: uppercase; color: var(--text3);
+    margin-bottom: 8px; padding-left: 2px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .wn-board-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .wn-item {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 7px 10px; border-radius: var(--radius-sm);
+    margin-bottom: 3px;
+  }
+  .wn-item:hover { background: var(--surface2); }
+  .wn-item-icon { font-size: 14px; flex-shrink: 0; width: 20px; text-align: center; }
+  .wn-item-body { flex: 1; min-width: 0; }
+  .wn-item-text { font-size: 0.86em; color: var(--text2); line-height: 1.4; }
+  .wn-item-text strong { color: var(--text); }
+  .wn-item-time { font-size: 0.75em; color: var(--text3); margin-top: 1px; }
+  .wn-empty { text-align: center; padding: 32px 0; color: var(--text3); font-size: 0.9em; }
+  .wn-stats {
+    display: flex; gap: 10px; flex-wrap: wrap;
+    padding: 10px 14px; background: var(--surface2);
+    border-radius: var(--radius-sm); margin-bottom: 16px;
+  }
+  .wn-stat { font-size: 0.82em; color: var(--text2); }
+  .wn-stat strong { color: var(--text); }
+
   /* ── REPORT MODAL ── */
   .rpt-preset {
     padding: 5px 12px; border-radius: var(--radius-sm);
@@ -1436,6 +1465,25 @@
       <button class="modal-btn cancel" id="rpt-export-pdf">Export PDF</button>
       <button class="modal-btn cancel" id="rpt-ai-summary" style="background:linear-gradient(135deg,rgba(108,99,255,0.15),rgba(255,101,132,0.15));border-color:rgba(108,99,255,0.4);color:var(--accent)">✦ AI Summary</button>
       <button class="modal-btn confirm" id="rpt-generate">Generate Report</button>
+    </div>
+  </div>
+</div>
+
+<!-- What's New modal -->
+<div class="modal-overlay" id="modal-whats-new">
+  <div class="modal" style="width:520px;max-height:88vh;display:flex;flex-direction:column;padding:0;overflow:hidden">
+    <div style="padding:22px 24px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <h2 style="margin-bottom:3px">👋 Welcome back</h2>
+          <div style="font-size:0.82em;color:var(--text3)" id="wn-since-label">Here's what changed since your last visit</div>
+        </div>
+        <button class="modal-btn cancel" id="wn-close" style="padding:6px 14px">Dismiss</button>
+      </div>
+    </div>
+    <div id="wn-body" style="flex:1;overflow-y:auto;padding:16px 24px"></div>
+    <div style="padding:12px 24px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0">
+      <button class="modal-btn confirm" id="wn-got-it">Got it</button>
     </div>
   </div>
 </div>
@@ -4770,14 +4818,17 @@ Keep the tone confident and action-oriented. Use specific task and group names. 
 RAW ACTIVITY DATA:
 ${reportText}`;
 
+  // Use a proxy worker — direct browser calls to Anthropic require a server-side key
+  const PROXY_URL = 'https://ahab-ai-proxy.YOURSUBDOMAIN.workers.dev'; // ← update this
+
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch(PROXY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1024,
-        stream: true,
+        stream: false,
         messages: [{ role: 'user', content: prompt }],
       }),
     });
@@ -4787,35 +4838,10 @@ ${reportText}`;
       throw new Error(err.error?.message || `API error ${response.status}`);
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop(); // keep incomplete line
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6).trim();
-        if (data === '[DONE]') continue;
-        try {
-          const parsed = JSON.parse(data);
-          const delta = parsed.delta?.text || '';
-          if (delta) {
-            output.textContent += delta;
-            output.scrollTop = output.scrollHeight;
-          }
-        } catch(e) {}
-      }
-    }
-
-    // Tidy up any trailing whitespace
-    output.textContent = output.textContent.trim();
+    const result = await response.json();
+    const text = result.content?.map(b => b.text || '').join('') || '';
+    output.textContent = text.trim();
+    output.scrollTop = output.scrollHeight;
 
   } catch(e) {
     output.textContent = `Error: ${e.message}`;
@@ -6046,6 +6072,184 @@ async function handleShareLink() {
 }
 
 // ── Bootstrap: load from Firebase then start listeners ───
+// ══════════════════════════════════════════════════════════
+//  WHAT'S NEW — activity digest since last visit
+// ══════════════════════════════════════════════════════════
+
+const LAST_VISIT_KEY = 'ahab_last_visit';
+
+async function showWhatsNew() {
+  // Read lastVisitedAt from localStorage (fast) and Firestore (cross-device)
+  const localLast  = parseInt(localStorage.getItem(LAST_VISIT_KEY) || '0', 10);
+  let   remoteLast = 0;
+
+  if (MY_USER_ID && auth.currentUser) {
+    try {
+      const snap = await db.collection(USERS_COL).doc(MY_USER_ID).get();
+      if (snap.exists) remoteLast = snap.data().lastVisitedAt || 0;
+    } catch(e) {}
+  }
+
+  const lastVisit = Math.max(localLast, remoteLast);
+  const now = Date.now();
+
+  // Record this visit
+  localStorage.setItem(LAST_VISIT_KEY, String(now));
+  if (MY_USER_ID && auth.currentUser) {
+    db.collection(USERS_COL).doc(MY_USER_ID)
+      .set({ lastVisitedAt: now }, { merge: true }).catch(() => {});
+  }
+
+  // First-ever visit or very short gap (< 5 min) — don't show
+  if (!lastVisit || now - lastVisit < 5 * 60 * 1000) return;
+
+  // Gather activity across all boards since lastVisit
+  const boardSections = [];
+  let totalEvents = 0;
+
+  state.boards.forEach(board => {
+    const items = [];
+    const members = resolveMembers(board);
+
+    (board.groups || []).forEach(group => {
+      (group.tasks || []).forEach(task => {
+        (task.activity || []).forEach(ev => {
+          if (ev.ts <= lastVisit || ev.ts > now) return;
+          // Skip trivial field changes that aren't interesting in a digest
+          if (ev.type === 'field_change' && ev.field === 'updatedAt') return;
+
+          const authorName = ev.authorId
+            ? (members.find(m => m.id === ev.authorId)?.name || ev.authorName || null)
+            : ev.authorName || null;
+
+          let text = '';
+          let icon = '';
+          switch (ev.type) {
+            case 'created':
+              icon = '✨'; text = `<strong>${esc(task.name)}</strong> was created`; break;
+            case 'status_change':
+              icon = '🔄'; text = `<strong>${esc(task.name)}</strong> moved to <strong>${esc(ev.next||'')}</strong>`; break;
+            case 'done_toggle':
+              icon = ev.done ? '✅' : '↩';
+              text = `<strong>${esc(task.name)}</strong> marked ${ev.done ? 'complete' : 'incomplete'}`; break;
+            case 'todo_done':
+              icon = '✅'; text = `To-do completed on <strong>${esc(task.name)}</strong>: <em>${esc((ev.text||'').slice(0,60))}</em>`; break;
+            case 'note_added': {
+              const sentIcon = ev.sentiment === 'positive' ? '👍'
+                : ev.sentiment === 'negative' ? '👎'
+                : ev.sentiment === 'neutral'  ? '➖' : '💬';
+              icon = sentIcon;
+              const byStr = authorName ? ` by <strong>${esc(authorName)}</strong>` : '';
+              text = `Note on <strong>${esc(task.name)}</strong>${byStr}: <em>"${esc((ev.text||'').slice(0,80))}${(ev.text||'').length > 80 ? '…' : ''}"</em>`;
+              break;
+            }
+            case 'field_change':
+              if (ev.field === 'name') {
+                icon = '✏️'; text = `Task renamed to <strong>${esc(ev.next||'')}</strong>`;
+              } else {
+                icon = '✏️'; text = `<strong>${esc(task.name)}</strong>: ${esc(ev.field)} changed`;
+              }
+              break;
+            default: return;
+          }
+
+          if (text) items.push({ ts: ev.ts, icon, text, group: group.name });
+        });
+
+        // Also catch notes that predate activity logging
+        (task.notes || []).forEach(note => {
+          if (note.system) return;
+          if (!note.createdAt || note.createdAt <= lastVisit || note.createdAt > now) return;
+          // Skip if already captured via activity log
+          const already = (task.activity||[]).some(ev =>
+            ev.type === 'note_added' && Math.abs(ev.ts - note.createdAt) < 1000);
+          if (already) return;
+          const authorName = note.authorName || members.find(m => m.id === note.authorId)?.name;
+          const sentIcon = note.sentiment === 'positive' ? '👍'
+            : note.sentiment === 'negative' ? '👎'
+            : note.sentiment === 'neutral'  ? '➖' : '💬';
+          const byStr = authorName ? ` by <strong>${esc(authorName)}</strong>` : '';
+          items.push({
+            ts: note.createdAt, icon: sentIcon,
+            text: `Note on <strong>${esc(task.name)}</strong>${byStr}: <em>"${esc((note.text||'').slice(0,80))}"</em>`,
+            group: group.name,
+          });
+        });
+      });
+    });
+
+    if (items.length > 0) {
+      items.sort((a, b) => b.ts - a.ts); // newest first
+      boardSections.push({ board, items });
+      totalEvents += items.length;
+    }
+  });
+
+  if (totalEvents === 0) return; // nothing to show
+
+  // Build modal content
+  const sinceStr = fmtSinceTime(lastVisit);
+  document.getElementById('wn-since-label').textContent = `Here's what changed since ${sinceStr}`;
+
+  const body = document.getElementById('wn-body');
+
+  // Stats bar
+  const newTasks  = boardSections.flatMap(s => s.items).filter(i => i.icon === '✨').length;
+  const completed = boardSections.flatMap(s => s.items).filter(i => i.icon === '✅').length;
+  const notes     = boardSections.flatMap(s => s.items).filter(i => ['💬','👍','👎','➖'].includes(i.icon)).length;
+  const statParts = [];
+  if (newTasks)  statParts.push(`<span class="wn-stat"><strong>${newTasks}</strong> new task${newTasks===1?'':'s'}</span>`);
+  if (completed) statParts.push(`<span class="wn-stat"><strong>${completed}</strong> completed</span>`);
+  if (notes)     statParts.push(`<span class="wn-stat"><strong>${notes}</strong> note${notes===1?'':'s'}</span>`);
+  statParts.push(`<span class="wn-stat"><strong>${totalEvents}</strong> total update${totalEvents===1?'':'s'}</span>`);
+
+  let html = `<div class="wn-stats">${statParts.join('<span style="color:var(--border2)">·</span>')}</div>`;
+
+  boardSections.forEach(({ board, items }) => {
+    html += `<div class="wn-board-section">
+      <div class="wn-board-title">
+        <div class="wn-board-dot" style="background:${board.color||'var(--accent)'}"></div>
+        ${esc(board.name)}
+      </div>`;
+    // Cap at 12 items per board to keep it digestible
+    const shown = items.slice(0, 12);
+    shown.forEach(item => {
+      html += `<div class="wn-item">
+        <div class="wn-item-icon">${item.icon}</div>
+        <div class="wn-item-body">
+          <div class="wn-item-text">${item.text}</div>
+          <div class="wn-item-time">${esc(item.group)} · ${fmtTs(item.ts)}</div>
+        </div>
+      </div>`;
+    });
+    if (items.length > 12) {
+      html += `<div style="font-size:0.79em;color:var(--text3);padding:4px 10px">…and ${items.length - 12} more update${items.length-12===1?'':'s'}</div>`;
+    }
+    html += `</div>`;
+  });
+
+  body.innerHTML = html;
+  document.getElementById('modal-whats-new').classList.add('open');
+}
+
+function fmtSinceTime(ts) {
+  const diff = Date.now() - ts;
+  const mins  = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days  = Math.floor(diff / 86400000);
+  if (mins < 60)   return `${mins} minute${mins===1?'':'s'} ago`;
+  if (hours < 24)  return `${hours} hour${hours===1?'':'s'} ago`;
+  if (days === 1)  return 'yesterday';
+  if (days < 7)    return `${days} days ago`;
+  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// Modal close handlers
+document.getElementById('wn-close').addEventListener('click', () =>
+  document.getElementById('modal-whats-new').classList.remove('open'));
+document.getElementById('wn-got-it').addEventListener('click', () =>
+  document.getElementById('modal-whats-new').classList.remove('open'));
+
 async function initFirebaseSync() {
   // Show the sync indicator
   const indicator = document.getElementById('sync-indicator');
@@ -6156,6 +6360,9 @@ async function initFirebaseSync() {
       }
     }, 80);
   });
+
+  // Show What's New digest after boards are loaded
+  showWhatsNew();
 }
 
 // ── Share badge ───────────────────────────────────────────
