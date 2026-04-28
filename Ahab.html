@@ -988,7 +988,28 @@
   #dd-move-task::-webkit-scrollbar { width: 4px; }
   #dd-move-task::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
 
-  /* ── WHAT'S NEW ── */
+  /* ── STAR / FOCUS ── */
+  .star-btn {
+    background: none; border: none; cursor: pointer;
+    font-size: 14px; padding: 2px 3px; border-radius: 3px;
+    color: var(--text3); line-height: 1; flex-shrink: 0;
+    transition: color 0.12s, transform 0.12s;
+    opacity: 0;
+  }
+  .task-row:hover .star-btn,
+  .star-btn.starred { opacity: 1; }
+  .star-btn.starred { color: #f7b731; }
+  .star-btn:hover   { color: #f7b731; transform: scale(1.2); opacity: 1; }
+  .focused-section-header {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 0.78em; font-weight: 700; letter-spacing: 0.7px;
+    text-transform: uppercase; color: #f7b731;
+    margin: 0 0 8px; padding: 6px 10px;
+    background: rgba(247,183,49,0.08); border-radius: var(--radius-sm);
+    border-left: 3px solid #f7b731;
+  }
+  .rpt-focused-block { border-color: rgba(247,183,49,0.4) !important; }
+  .rpt-focused-block .rpt-task-title { background: rgba(247,183,49,0.07) !important; }
   .wn-board-section { margin-bottom: 18px; }
   .wn-board-title {
     font-size: 0.78em; font-weight: 700; letter-spacing: 0.7px;
@@ -1225,7 +1246,10 @@
   <div class="tp-header">
     <div class="tp-title-wrap">
       <div class="tp-breadcrumb" id="tp-breadcrumb"></div>
-      <input class="tp-task-name" id="tp-task-name" placeholder="Task name…" />
+      <div style="display:flex;align-items:center;gap:6px">
+        <button id="tp-star-btn" class="star-btn" style="font-size:16px;opacity:1" title="Focus this task">★</button>
+        <input class="tp-task-name" id="tp-task-name" placeholder="Task name…" />
+      </div>
     </div>
     <button class="tp-close" id="tp-close">✕</button>
   </div>
@@ -1757,6 +1781,7 @@ function migrate(data) {
       if (!t.notes) t.notes = [];
       if (!t.todos) t.todos = [];
       if (!t.activity) t.activity = [];
+      if (t.starred === undefined) t.starred = false;
     }));
     if (!b._deletedTasks) b._deletedTasks = {};
   });
@@ -2044,6 +2069,7 @@ function renderBoard(){
 
       let cells=`<td class="col-task"><div class="task-name-cell">
         <div class="task-check${task.done?' checked':''}" data-tid="${task.id}" data-gid="${group.id}">${task.done?'✓':''}</div>
+        <button class="star-btn${task.starred?' starred':''}" data-tid="${task.id}" data-gid="${group.id}" title="${task.starred?'Remove focus':'Focus this task'}">★</button>
         <input class="task-name${task.done?' done-text':''}" value="${esc(task.name)}" data-tid="${task.id}" data-gid="${group.id}" />
         ${noteBadge}
       </div></td>`;
@@ -2125,6 +2151,18 @@ function renderBoard(){
   });
   area.querySelectorAll('.task-check').forEach(el=>{
     el.addEventListener('click',e=>{e.stopPropagation();const t=findTask(el.dataset.gid,el.dataset.tid);if(t){const wasDone=t.done;t.done=!t.done;if(t.done)t.status=getStatusDoneId(ab());logActivity(t,'done_toggle',{done:t.done,prevDone:wasDone});touch(t);save();render();}});
+  });
+  area.querySelectorAll('.star-btn').forEach(el=>{
+    el.addEventListener('click',e=>{
+      e.stopPropagation();
+      const t=findTask(el.dataset.gid,el.dataset.tid);
+      if(t){
+        t.starred=!t.starred;
+        el.classList.toggle('starred',t.starred);
+        el.title=t.starred?'Remove focus':'Focus this task';
+        touch(t);save();
+      }
+    });
   });
   area.querySelectorAll('.task-name').forEach(inp=>{
     inp.addEventListener('change',()=>{const t=findTask(inp.dataset.gid,inp.dataset.tid);if(t){const prev=t.name;t.name=inp.value;logActivity(t,'field_change',{field:'name',prev,next:t.name});touch(t);save();}});
@@ -3041,6 +3079,20 @@ function renderTaskPanel() {
   const board = ab(); if (!board) return;
   const task  = findTask(gid, tid); if (!task) return;
   const group = findGrp(gid); if (!group) return;
+
+  // ── Star / focus button in panel ─────────────────────────
+  const tpStar = document.getElementById('tp-star-btn');
+  tpStar.className = 'star-btn' + (task.starred ? ' starred' : '');
+  tpStar.title = task.starred ? 'Remove focus' : 'Focus this task';
+  tpStar.onclick = () => {
+    task.starred = !task.starred;
+    tpStar.className = 'star-btn' + (task.starred ? ' starred' : '');
+    tpStar.title = task.starred ? 'Remove focus' : 'Focus this task';
+    // Sync the board row star too
+    document.querySelectorAll(`.star-btn[data-tid="${tid}"]`)
+      .forEach(el => { el.classList.toggle('starred', task.starred); });
+    touch(task); save();
+  };
 
   // ── Breadcrumb + title ───────────────────────────────────
   document.getElementById('tp-breadcrumb').textContent =
@@ -4553,24 +4605,32 @@ document.getElementById('rpt-generate').addEventListener('click', () => {
   if (reportGroups.length === 0) {
     html += `<div style="color:var(--text3);text-align:center;padding:30px">No activity found in this date range.</div>`;
   } else {
+    // Collect all focused task blocks across all groups
+    const focusedBlocks = [];
     reportGroups.forEach(({ group, taskBlocks }) => {
-      html += `<div class="rpt-group-label" style="border-left:3px solid ${group.color};padding-left:8px">${esc(group.name)}</div>`;
-      taskBlocks.forEach(({ task, events }) => {
-        const statusVal = board.selectValues?.status?.find(v => v.id === task.status);
-        const badgeStyle = statusVal
-          ? `background:${hexAlpha(statusVal.color, 0.15)};color:${statusVal.color}`
-          : 'background:var(--surface3);color:var(--text3)';
-        html += `
-          <div class="rpt-task-block">
+      taskBlocks.forEach(block => {
+        if (block.task.starred) focusedBlocks.push({ ...block, group });
+      });
+    });
+
+    // Helper to render a task block
+    const renderTaskBlock = ({ task, events, group }, focused = false) => {
+      const statusVal = board.selectValues?.status?.find(v => v.id === task.status);
+      const badgeStyle = statusVal
+        ? `background:${hexAlpha(statusVal.color, 0.15)};color:${statusVal.color}`
+        : 'background:var(--surface3);color:var(--text3)';
+      let block = `
+          <div class="rpt-task-block${focused?' rpt-focused-block':''}">
             <div class="rpt-task-title">
-              <span>${task.done ? '✓' : '○'}</span>
+              ${focused ? '<span title="Focused">★</span>' : `<span>${task.done ? '✓' : '○'}</span>`}
               <span style="flex:1">${esc(task.name)}</span>
+              ${focused && group ? `<span style="font-size:0.75em;color:var(--text3);font-weight:400">${esc(group.name)}</span>` : ''}
               ${statusVal ? `<span class="rpt-task-badge" style="${badgeStyle}">${esc(statusVal.label)}</span>` : ''}
               <span style="font-size:0.75em;color:var(--text3);font-weight:400">${events.length} event${events.length===1?'':'s'}</span>
             </div>
             <div class="rpt-events">`;
-        events.forEach(ev => {
-          html += `
+      events.forEach(ev => {
+        block += `
               <div class="rpt-event">
                 <div class="rpt-event-icon">${eventIcon(ev.type, ev)}</div>
                 <div class="rpt-event-body">
@@ -4578,9 +4638,24 @@ document.getElementById('rpt-generate').addEventListener('click', () => {
                   <span class="rpt-event-time">${fmtTs(ev.ts)}</span>
                 </div>
               </div>`;
-        });
-        html += `</div></div>`;
       });
+      block += `</div></div>`;
+      return block;
+    };
+
+    // Focused section first
+    if (focusedBlocks.length > 0) {
+      html += `<div class="focused-section-header">★ Focused Items</div>`;
+      focusedBlocks.forEach(block => { html += renderTaskBlock(block, true); });
+      html += `<div style="height:10px"></div>`;
+    }
+
+    // Then all groups (skipping starred tasks that are already shown above)
+    reportGroups.forEach(({ group, taskBlocks }) => {
+      const nonFocused = taskBlocks.filter(b => !b.task.starred);
+      if (nonFocused.length === 0) return;
+      html += `<div class="rpt-group-label" style="border-left:3px solid ${group.color};padding-left:8px">${esc(group.name)}</div>`;
+      nonFocused.forEach(block => { html += renderTaskBlock(block); });
     });
   }
 
@@ -6153,7 +6228,7 @@ async function showWhatsNew() {
             default: return;
           }
 
-          if (text) items.push({ ts: ev.ts, icon, text, group: group.name });
+          if (text) items.push({ ts: ev.ts, icon, text, group: group.name, starred: !!task.starred });
         });
 
         // Also catch notes that predate activity logging
@@ -6173,6 +6248,7 @@ async function showWhatsNew() {
             ts: note.createdAt, icon: sentIcon,
             text: `Note on <strong>${esc(task.name)}</strong>${byStr}: <em>"${esc((note.text||'').slice(0,80))}"</em>`,
             group: group.name,
+            starred: !!task.starred,
           });
         });
       });
@@ -6205,11 +6281,31 @@ async function showWhatsNew() {
 
   let html = `<div class="wn-stats">${statParts.join('<span style="color:var(--border2)">·</span>')}</div>`;
 
-  boardSections.forEach(({ board, items }) => {
+  // Collect all focused items across all boards
+  const focusedItems = [];
+  boardSections.forEach(({ board: b, items }) => {
+    items.forEach(item => { if (item.starred) focusedItems.push({ ...item, boardName: b.name, boardColor: b.color }); });
+  });
+
+  if (focusedItems.length > 0) {
+    html += `<div class="focused-section-header">★ Focused Items</div>`;
+    focusedItems.forEach(item => {
+      html += `<div class="wn-item">
+        <div class="wn-item-icon">${item.icon}</div>
+        <div class="wn-item-body">
+          <div class="wn-item-text">${item.text}</div>
+          <div class="wn-item-time">${esc(item.boardName)} · ${esc(item.group)} · ${fmtTs(item.ts)}</div>
+        </div>
+      </div>`;
+    });
+    html += `<div style="height:8px"></div>`;
+  }
+
+  boardSections.forEach(({ board: b, items }) => {
     html += `<div class="wn-board-section">
       <div class="wn-board-title">
-        <div class="wn-board-dot" style="background:${board.color||'var(--accent)'}"></div>
-        ${esc(board.name)}
+        <div class="wn-board-dot" style="background:${b.color||'var(--accent)'}"></div>
+        ${esc(b.name)}
       </div>`;
     // Cap at 12 items per board to keep it digestible
     const shown = items.slice(0, 12);
