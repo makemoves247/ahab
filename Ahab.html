@@ -993,13 +993,13 @@
     background: none; border: none; cursor: pointer;
     font-size: 14px; padding: 2px 3px; border-radius: 3px;
     color: var(--text3); line-height: 1; flex-shrink: 0;
-    transition: color 0.12s, transform 0.12s;
-    opacity: 0;
+    transition: color 0.12s, transform 0.12s, opacity 0.12s;
+    opacity: 0.35;
   }
-  .task-row:hover .star-btn,
-  .star-btn.starred { opacity: 1; }
-  .star-btn.starred { color: #f7b731; }
   .star-btn:hover   { color: #f7b731; transform: scale(1.2); opacity: 1; }
+  .star-btn.starred { color: #f7b731; opacity: 1; }
+  .task-row:hover .star-btn { opacity: 0.6; }
+  .task-row:hover .star-btn:hover { opacity: 1; }
   .focused-section-header {
     display: flex; align-items: center; gap: 7px;
     font-size: 0.78em; font-weight: 700; letter-spacing: 0.7px;
